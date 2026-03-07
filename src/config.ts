@@ -1,3 +1,6 @@
+// @input:  process.env
+// @output: Config, loadConfig
+// @pos:    根层 - 环境变量加载 + 校验
 export interface Config {
   qq: {
     appId: string
@@ -6,6 +9,7 @@ export interface Config {
   }
   opencode: {
     baseUrl: string
+    externalUrl: boolean
   }
   allowedUsers: string[]
   maxReplyLength: number
@@ -34,7 +38,8 @@ export function loadConfig(): Config {
       sandbox: process.env.QQ_SANDBOX === "true",
     },
     opencode: {
-      baseUrl: process.env.OPENCODE_BASE_URL?.trim() || "http://localhost:54321",
+      baseUrl: process.env.OPENCODE_BASE_URL?.trim() || "",
+      externalUrl: !!process.env.OPENCODE_BASE_URL?.trim(),
     },
     allowedUsers,
     maxReplyLength: parseInt(process.env.MAX_REPLY_LENGTH ?? "3000", 10),

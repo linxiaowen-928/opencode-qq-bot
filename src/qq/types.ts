@@ -1,6 +1,6 @@
-/**
- * QQ Bot 基础配置
- */
+// @input:  (none)
+// @output: MessageContext, C2CMessageEvent, GroupMessageEvent, WSPayload, QQBotConfig
+// @pos:    qq层 - QQ Bot 消息事件和协议类型定义
 export interface QQBotConfig {
   appId: string
   clientSecret: string

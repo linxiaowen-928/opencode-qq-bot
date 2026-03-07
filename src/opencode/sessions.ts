@@ -1,3 +1,6 @@
+// @input:  ./client (OpencodeClient)
+// @output: SessionManager, UserSession
+// @pos:    opencode层 - QQ用户<->OpenCode Session 映射管理
 import type { OpencodeClient } from "./client.js"
 
 interface UserSession {

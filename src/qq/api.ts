@@ -1,6 +1,6 @@
-/**
- * QQ Bot API 鉴权和请求封装
- */
+// @input:  (none - raw HTTP to QQ Bot REST API)
+// @output: getAccessToken, apiRequest, sendC2CMessage, sendGroupMessage, getGatewayUrl, startBackgroundTokenRefresh
+// @pos:    qq层 - QQ Bot REST API 鉴权+请求封装 (Token singleflight + 后台刷新)
 
 const API_BASE = "https://api.sgroup.qq.com"
 const TOKEN_URL = "https://bots.qq.com/app/getAppAccessToken"

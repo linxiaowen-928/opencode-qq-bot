@@ -1,3 +1,6 @@
+// @input:  ./api (sendC2CMessage, sendGroupMessage), ./types (MessageContext)
+// @output: replyToQQ, formatForQQ, splitMessage
+// @pos:    qq层 - 消息发送 (Markdown格式化 + 分割 + 被动回复)
 import { sendC2CMessage, sendGroupMessage, getNextMsgSeq } from "./api.js"
 import type { MessageContext } from "./types.js"
 
@@ -10,7 +13,7 @@ export function formatForQQ(text: string): string {
   // 保护代码块，用占位符替换
   let processed = text.replace(/```[\s\S]*?```/g, (match) => {
     codeBlocks.push(match)
-    return `__CODE_BLOCK_${codeBlocks.length - 1}__`
+    return `\x00CB${codeBlocks.length - 1}\x00`
   })
 
   // 去除 markdown 标记
@@ -26,7 +29,7 @@ export function formatForQQ(text: string): string {
 
   // 还原代码块
   for (let i = 0; i < codeBlocks.length; i++) {
-    processed = processed.replace(`__CODE_BLOCK_${i}__`, codeBlocks[i])
+    processed = processed.replace(`\x00CB${i}\x00`, codeBlocks[i])
   }
 
   return processed.trim()

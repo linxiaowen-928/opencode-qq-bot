@@ -1,3 +1,6 @@
+// @input:  @opencode-ai/sdk
+// @output: createClient, getClient, healthCheck, OpencodeClient
+// @pos:    opencode层 - OpenCode SDK 客户端封装 + 健康检查
 import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk"
 
 let client: OpencodeClient | null = null

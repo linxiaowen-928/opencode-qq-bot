@@ -1,3 +1,6 @@
+// @input:  ws, ./api (getAccessToken, getGatewayUrl), ./types (MessageContext)
+// @output: startGateway, MessageHandler
+// @pos:    qq层 - QQ Bot WebSocket Gateway 状态机 (心跳/重连/消息分发)
 import WebSocket from "ws"
 import { clearTokenCache, getAccessToken, getGatewayUrl } from "./api.js"
 import type {

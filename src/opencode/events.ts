@@ -1,3 +1,6 @@
+// @input:  @opencode-ai/sdk (Event, SSE stream), ./client (OpencodeClient)
+// @output: EventRouter, EventCallback
+// @pos:    opencode层 - 全局 SSE 事件订阅 + 按 sessionId 分发
 import type { OpencodeClient } from "./client.js"
 import type { Event } from "@opencode-ai/sdk"
 
