@@ -41,7 +41,11 @@ export function createBridge(
 ): Bridge {
   // 消息队列：userId → [未发送的消息内容列表]
   const messageQueue = new Map<string, string[]>()
+  // 持久化的 greeted 状态（每个 user 是否已打过招呼）
   const greeted = new Set<string>()
+  // 本次启动前有未完成 prompt 的用户，需在第一条消息时通知
+  const pendingOnStartup = new Set(sessions.getPendingPromptsOnStartup())
+  console.log(`[bridge] ${pendingOnStartup.size} users had pending prompts on startup`)
   const pendingSelections = new Map<string, PendingSelection>()
   const commandContext: CommandContext = {
     config,
@@ -136,6 +140,7 @@ export function createBridge(
       messageQueue.set(ctx.userId, [])
 
       try {
+        sessions.savePendingPrompt(ctx.userId)
         await processPrompt(ctx.userId, content, ctx)
       } catch (error) {
         await sendReply(ctx, `处理失败：${toErrorMessage(error)}`)
@@ -143,10 +148,12 @@ export function createBridge(
         // 排空队列：合并所有等待的消息为一条 prompt
         const queue = messageQueue.get(ctx.userId) ?? []
         messageQueue.delete(ctx.userId)
+        sessions.clearPendingPrompt(ctx.userId)
         if (queue.length > 0) {
           const combined = queue.join("\n---\n")
           console.log(`[bridge] draining queue for userId=${ctx.userId.slice(0, 8)}... combined ${queue.length} messages`)
           try {
+            sessions.savePendingPrompt(ctx.userId)
             await processPrompt(ctx.userId, combined, ctx)
           } catch (error) {
             await sendReply(ctx, `处理失败：${toErrorMessage(error)}`)

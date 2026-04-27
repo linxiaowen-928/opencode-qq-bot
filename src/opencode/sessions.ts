@@ -15,6 +15,7 @@ interface UserSession {
 interface PersistedState {
   sessions: Array<{ userId: string; sessionId: string; title?: string }>
   projectDirectory?: string
+  pendingPrompts?: Array<{ userId: string; timestamp: number }>
 }
 
 const STATE_FILE = join(homedir(), ".openqq", "session_state.json")
@@ -24,6 +25,8 @@ export class SessionManager {
   private userSessionHistory = new Map<string, Array<{ id: string; title: string }>>()
   private client: OpencodeClient
   private projectDirectory: string | undefined
+  /** 重启前正在处理中的用户（异常中断时推断） */
+  private pendingPrompts = new Set<string>()
 
   constructor(client: OpencodeClient, projectDirectory?: string) {
     this.client = client
@@ -43,6 +46,9 @@ export class SessionManager {
           title: s.title,
         })),
         projectDirectory: this.projectDirectory,
+        pendingPrompts: this.pendingPrompts.size > 0
+          ? Array.from(this.pendingPrompts).map((userId) => ({ userId, timestamp: Date.now() }))
+          : undefined,
       }
       mkdirSync(join(homedir(), ".openqq"), { recursive: true })
       writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), "utf-8")
@@ -68,7 +74,12 @@ export class SessionManager {
       if (state.projectDirectory) {
         this.projectDirectory = state.projectDirectory
       }
-      console.log(`[sessions] loaded ${state.sessions.length} session mappings from disk, projectDir=${this.projectDirectory || "(none)"}`)
+      if (state.pendingPrompts) {
+        for (const p of state.pendingPrompts) {
+          this.pendingPrompts.add(p.userId)
+        }
+      }
+      console.log(`[sessions] loaded ${state.sessions.length} session mappings, ${this.pendingPrompts.size} pending prompts from disk, projectDir=${this.projectDirectory || "(none)"}`)
     } catch (err) {
       console.warn(`[sessions] loadFromDisk failed: ${err instanceof Error ? err.message : String(err)}`)
     }
@@ -179,6 +190,23 @@ export class SessionManager {
       history.push({ id: sessionId, title })
       this.userSessionHistory.set(userId, history)
     }
+  }
+
+  /** 记录一个用户正在处理 prompt，重启后可检测到中断。 */
+  savePendingPrompt(userId: string): void {
+    this.pendingPrompts.add(userId)
+    this.saveToDisk()
+  }
+
+  /** 清除用户的 pending 标记（prompt 正常完成时调用）。 */
+  clearPendingPrompt(userId: string): void {
+    this.pendingPrompts.delete(userId)
+    this.saveToDisk()
+  }
+
+  /** 返回在本次启动前有未完成 prompt 的用户列表。 */
+  getPendingPromptsOnStartup(): string[] {
+    return Array.from(this.pendingPrompts)
   }
 }
 
