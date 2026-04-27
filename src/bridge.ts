@@ -2,7 +2,7 @@ import type { Config } from "./config.js"
 import type { MessageContext } from "./qq/types.js"
 import { getAccessToken } from "./qq/token.js"
 import { replyToQQ } from "./qq/sender.js"
-import type { OpencodeClient } from "./opencode/client.js"
+import type { ClientRef, OpencodeClient } from "./opencode/client.js"
 import { promptAsync } from "./opencode/adapter.js"
 import { EventRouter } from "./opencode/events.js"
 import { SessionManager } from "./opencode/sessions.js"
@@ -14,9 +14,21 @@ import {
   isCommand,
   type CommandContext,
   type PendingSelection,
+  type ReconnectFn,
+  type SetProjectDirectoryFn,
 } from "./commands/index.js"
 
-const RESPONSE_TIMEOUT_MS = 5 * 60 * 1000
+const RESPONSE_TIMEOUT_MS = 60 * 60 * 1000   // 60 分钟
+const PROGRESS_INTERVAL_MS = 60 * 1000        // 1 分钟进度推送间隔
+
+interface StreamCallbacks {
+  /** 收到第一个流式文本块时调用（用于发 "处理中" 提示） */
+  onFirstChunk: () => Promise<void>
+  /** 每 PROGRESS_INTERVAL_MS 调用一次，传入当前积累的文本 */
+  onProgress: (text: string) => Promise<void>
+  /** session.idle 时调用，传入最终完整文本 */
+  onDone: (text: string) => Promise<void>
+}
 
 interface Bridge {
   handleMessage: (ctx: MessageContext) => Promise<void>
@@ -25,8 +37,11 @@ interface Bridge {
 export function createBridge(
   config: Config,
   client: OpencodeClient,
+  clientRef: ClientRef,
   router: EventRouter,
   sessions: SessionManager,
+  reconnect: ReconnectFn,
+  setProjectDirectory: SetProjectDirectoryFn,
 ): Bridge {
   const busyUsers = new Set<string>()
   const greeted = new Set<string>()
@@ -34,9 +49,13 @@ export function createBridge(
   const commandContext: CommandContext = {
     config,
     client,
+    clientRef,
+    router,
     sessions,
     getAccessToken: () => getAccessToken(config.qq.appId, config.qq.clientSecret),
     pendingSelections,
+    reconnect,
+    setProjectDirectory,
   }
 
   const handleMessage = async (ctx: MessageContext): Promise<void> => {
@@ -80,20 +99,41 @@ export function createBridge(
         const model = sessions.getModel(ctx.userId)
         const agent = sessions.getAgent(ctx.userId)
 
-        const replyText = await waitForSessionReply(router, session.sessionId, () => {
-          void promptAsync(client, {
-            sessionId: session.sessionId,
-            text: content,
-            model: model.providerId && model.modelId
-              ? { providerID: model.providerId, modelID: model.modelId }
-              : undefined,
-            agent,
-          })
-        })
+        let repliedProcessing = false
 
-        if (replyText.trim()) {
-          await sendReply(ctx, replyText)
-        }
+        await waitForSessionReply(
+          router,
+          session.sessionId,
+          () => {
+            void promptAsync(client, {
+              sessionId: session.sessionId,
+              text: content,
+              model: model.providerId && model.modelId
+                ? { providerID: model.providerId, modelID: model.modelId }
+                : undefined,
+              agent,
+              directory: sessions.getProjectDirectory(),
+            })
+          },
+          {
+            onFirstChunk: async () => {
+              if (!repliedProcessing) {
+                repliedProcessing = true
+                await sendReply(ctx, "AI 正在处理中...")
+              }
+            },
+            onProgress: async (text) => {
+              const prefix = "[AI 输出中] "
+              const preview = text.length > 500 ? text.slice(0, 500) + "..." : text
+              await sendReply(ctx, prefix + preview)
+            },
+            onDone: async (text) => {
+              if (text.trim()) {
+                await sendReply(ctx, text)
+              }
+            },
+          },
+        )
       } catch (error) {
         await sendReply(ctx, `处理失败：${toErrorMessage(error)}`)
       } finally {
@@ -147,20 +187,22 @@ function waitForSessionReply(
   router: EventRouter,
   sessionId: string,
   startPrompt: () => void,
-): Promise<string> {
+  callbacks: StreamCallbacks,
+): Promise<void> {
   let settled = false
   let latestText = ""
+  let hasReceivedChunk = false
+  let progressTimerId: ReturnType<typeof setInterval> | null = null
 
-  return new Promise<string>((resolve, reject) => {
+  return new Promise<void>((resolve, reject) => {
     const timeoutId = setTimeout(() => {
-      finish(() => reject(new Error("AI 响应超时（5 分钟）")))
+      finish(() => reject(new Error("AI 响应超时（60 分钟）")))
     }, RESPONSE_TIMEOUT_MS)
 
     const finish = (done: () => void): void => {
-      if (settled) {
-        return
-      }
+      if (settled) return
       settled = true
+      if (progressTimerId) clearInterval(progressTimerId)
       clearTimeout(timeoutId)
       router.unregister(sessionId)
       done()
@@ -172,12 +214,23 @@ function waitForSessionReply(
         const part = event.properties.part
         if (part.type === "text") {
           latestText = part.text
+          if (!hasReceivedChunk) {
+            hasReceivedChunk = true
+            void callbacks.onFirstChunk()
+            progressTimerId = setInterval(() => {
+              if (!settled && latestText) {
+                void callbacks.onProgress(latestText)
+              }
+            }, PROGRESS_INTERVAL_MS)
+          }
         }
         return
       }
 
       if (event.type === "session.idle") {
-        finish(() => resolve(latestText || "(AI 未返回内容)"))
+        finish(() => {
+          void callbacks.onDone(latestText || "(AI 未返回内容)").then(() => resolve())
+        })
         return
       }
 

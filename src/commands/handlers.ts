@@ -7,6 +7,7 @@ import {
   listAgents as adapterListAgents,
   updateSessionTitle,
   healthCheck,
+  listAllSessions,
 } from "../opencode/adapter.js"
 
 export async function handleNew(ctx: MessageContext, cmdCtx: CommandContext): Promise<string> {
@@ -24,7 +25,8 @@ export async function handleStop(ctx: MessageContext, cmdCtx: CommandContext): P
     return "当前还没有会话可停止"
   }
 
-  await abortSession(cmdCtx.client, session.sessionId)
+  const projectDir = cmdCtx.sessions.getProjectDirectory()
+  await abortSession(cmdCtx.client, session.sessionId, projectDir)
   return `已发送停止请求：${session.title ?? session.sessionId}`
 }
 
@@ -32,11 +34,23 @@ export async function handleStatus(ctx: MessageContext, cmdCtx: CommandContext):
   const session = cmdCtx.sessions.getSession(ctx.userId)
   const { providerId, modelId } = cmdCtx.sessions.getModel(ctx.userId)
   const agentId = cmdCtx.sessions.getAgent(ctx.userId)
+  const projectDir = cmdCtx.sessions.getProjectDirectory()
 
   let openCodeStatus: string
+  let serverSessionCount: number | null = null
   try {
     await healthCheck(cmdCtx.client)
     openCodeStatus = "运行中"
+    try {
+      const all = await listAllSessions(cmdCtx.clientRef.baseUrl)
+      if (projectDir) {
+        serverSessionCount = all.filter(s => s.directory === projectDir || s.projectWorktree === projectDir).length
+      } else {
+        serverSessionCount = all.length
+      }
+    } catch {
+      // 忽略：健康检查通过但 list 失败时仅不展示数量
+    }
   } catch {
     openCodeStatus = "异常"
   }
@@ -49,9 +63,14 @@ export async function handleStatus(ctx: MessageContext, cmdCtx: CommandContext):
     qqStatus = "异常"
   }
 
+  const mode = cmdCtx.clientRef.external ? "外部" : "嵌入式"
+  const countLine = serverSessionCount === null ? "" : `\n服务端 session 总数：${serverSessionCount}`
+  const projectLine = projectDir ? `\n当前 project：${projectDir}` : ""
+
   return [
     "OpenCode 状态",
     `服务器：${openCodeStatus}`,
+    `连接：${mode} - ${cmdCtx.clientRef.baseUrl}${countLine}${projectLine}`,
     `QQ 鉴权：${qqStatus}`,
     `会话：${session ? `${session.title ?? "未命名会话"} (${session.sessionId})` : "未创建"}`,
     `模型：${providerId && modelId ? `${providerId} / ${modelId}` : "默认"}`,
@@ -60,24 +79,52 @@ export async function handleStatus(ctx: MessageContext, cmdCtx: CommandContext):
 }
 
 export async function handleSessions(ctx: MessageContext, cmdCtx: CommandContext): Promise<string> {
-  const sessions = cmdCtx.sessions.getUserSessions(ctx.userId)
-  if (sessions.length === 0) {
-    return "当前没有可切换的历史会话"
+  // 从 OpenCode 服务端拉取完整 session 列表（跨 project）
+  let allSessions: Array<{ id: string; title: string; directory: string; projectWorktree: string; updatedAt: number }> = []
+  try {
+    allSessions = await listAllSessions(cmdCtx.clientRef.baseUrl)
+    allSessions.sort((a, b) => b.updatedAt - a.updatedAt)
+  } catch {
+    // 降级：无列表时展示空
+  }
+
+  if (allSessions.length === 0) {
+    return "当前没有可切换的会话（服务端和本地均无记录）"
+  }
+
+  // 按 projectWorktree 分组
+  const groups = new Map<string, typeof allSessions>()
+  for (const s of allSessions) {
+    const key = s.projectWorktree || "未知 project"
+    const list = groups.get(key) ?? []
+    list.push(s)
+    groups.set(key, list)
   }
 
   const currentSessionId = cmdCtx.sessions.getSession(ctx.userId)?.sessionId
   cmdCtx.pendingSelections.set(ctx.userId, {
     type: "session",
-    items: sessions.map((s) => ({ id: s.id, label: s.title })),
+    items: allSessions.map((s) => ({
+      id: s.id,
+      label: s.title,
+      directory: s.directory,
+    })),
     expiresAt: Date.now() + SELECTION_TTL_MS,
   })
 
-  const lines = sessions.map((s, index) => {
-    const prefix = s.id === currentSessionId ? "[当前] " : ""
-    return `${index + 1}. ${prefix}${s.title}`
-  })
-
-  return ["会话列表：", ...lines, "回复序号切换会话（60 秒内有效）"].join("\n")
+  const lines: string[] = [`会话列表（共 ${allSessions.length} 个）：`]
+  let idx = 1
+  for (const [worktree, sessions] of groups) {
+    const label = worktree === "/" ? "全局" : worktree.split("/").pop() || worktree
+    lines.push(`\n[${label}] (${sessions.length} sessions)`)
+    for (const s of sessions) {
+      const prefix = s.id === currentSessionId ? "[当前] " : ""
+      lines.push(`${idx}. ${prefix}${s.title}  ${formatRelativeTime(s.updatedAt)}`)
+      idx++
+    }
+  }
+  lines.push("回复序号切换会话（60 秒内有效）")
+  return lines.join("\n")
 }
 
 export async function handleModel(ctx: MessageContext, args: string, cmdCtx: CommandContext): Promise<string> {
@@ -174,12 +221,79 @@ export async function handleRename(ctx: MessageContext, args: string, cmdCtx: Co
   }
 
   try {
-    await updateSessionTitle(cmdCtx.client, session.sessionId, title)
+    const projectDir = cmdCtx.sessions.getProjectDirectory()
+    await updateSessionTitle(cmdCtx.client, session.sessionId, title, projectDir)
   } catch {
     // 服务端更新失败时仍更新本地，保证用户体验
   }
   cmdCtx.sessions.updateSessionTitle(ctx.userId, session.sessionId, title)
   return `已重命名当前会话：${title}`
+}
+
+export async function handleConnect(_ctx: MessageContext, args: string, cmdCtx: CommandContext): Promise<string> {
+  const url = args.trim()
+  if (!url) {
+    return [
+      "用法：cn <url>   例：cn http://127.0.0.1:4096",
+      `当前连接：${cmdCtx.clientRef.external ? "外部" : "嵌入式"} - ${cmdCtx.clientRef.baseUrl}`,
+    ].join("\n")
+  }
+  if (!/^https?:\/\//i.test(url)) {
+    return "地址需以 http:// 或 https:// 开头"
+  }
+
+  const previous = cmdCtx.clientRef.baseUrl
+  try {
+    await cmdCtx.reconnect(url)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return `切换失败：${msg}\n当前仍连接：${previous}`
+  }
+
+  return [
+    "已切换 OpenCode 连接（本地 session 缓存已清空）",
+    `新地址：${cmdCtx.clientRef.baseUrl}`,
+    "发送 sn 或 /sessions 查看新实例上的会话列表",
+  ].join("\n")
+}
+
+export async function handleProjects(ctx: MessageContext, _args: string, cmdCtx: CommandContext): Promise<string> {
+  const { listProjects } = await import("../opencode/adapter.js")
+  const projects = await listProjects(cmdCtx.client)
+  projects.sort((a, b) => a.worktree.localeCompare(b.worktree))
+
+  // 一次拉全部 session，按 projectWorktree 统计
+  const countsByWorktree = new Map<string, number>()
+  try {
+    const allSessions = await listAllSessions(cmdCtx.clientRef.baseUrl)
+    for (const s of allSessions) {
+      const key = s.projectWorktree || "/"
+      countsByWorktree.set(key, (countsByWorktree.get(key) ?? 0) + 1)
+    }
+  } catch { /* 失败不致命 */ }
+
+  if (projects.length === 0) {
+    return "当前没有可用的 project"
+  }
+
+  const currentDir = cmdCtx.sessions.getProjectDirectory()
+  cmdCtx.pendingSelections.set(ctx.userId, {
+    type: "project",
+    items: projects.map((p) => ({ id: p.worktree, label: p.worktree })),
+    expiresAt: Date.now() + SELECTION_TTL_MS,
+  })
+
+  const lines = projects.map((p, index) => {
+    const isCurrent = p.worktree === currentDir
+    const count = countsByWorktree.get(p.worktree) ?? "?"
+    return `${index + 1}. ${isCurrent ? "[当前] " : ""}${p.worktree} (${count} sessions)`
+  })
+
+  return [
+    `Project 列表（共 ${projects.length} 个）：`,
+    ...lines,
+    "回复序号切换当前 project（60 秒内有效）",
+  ].join("\n")
 }
 
 async function ensureSession(userId: string, cmdCtx: CommandContext): Promise<void> {
@@ -194,4 +308,14 @@ function splitModelId(value: string): { providerId: string; modelId: string } | 
   const modelId = trimmed.slice(slashIndex + 1).trim()
   if (!providerId || !modelId) return null
   return { providerId, modelId }
+}
+
+function formatRelativeTime(timestamp: number): string {
+  const diff = Date.now() - timestamp
+  if (diff < 60_000) return "刚刚"
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}分钟前`
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}小时前`
+  if (diff < 604_800_000) return `${Math.floor(diff / 86_400_000)}天前`
+  const d = new Date(timestamp)
+  return `${d.getMonth() + 1}/${d.getDate()}`
 }

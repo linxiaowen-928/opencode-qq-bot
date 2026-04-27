@@ -1,0 +1,24 @@
+[Unit]
+Description=OpenCode QQ Bot - AI coding assistant via QQ
+After=network-online.target opencode-serve.service
+Wants=network-online.target opencode-serve.service
+
+[Service]
+Type=simple
+User=linx
+WorkingDirectory=/mnt/fireshare/code/opencode-qq-bot
+Environment="PATH=/home/linx/.bun/bin:/home/linx/.opencode/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="OPENCODE_BASE_URL=http://127.0.0.1:4096"
+EnvironmentFile=/home/linx/.openqq/.env
+ExecStart=/home/linx/.bun/bin/bun run /mnt/fireshare/code/opencode-qq-bot/src/index.ts
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/mnt/fireshare/code/opencode-qq-bot/logs/bot.log
+StandardError=append:/mnt/fireshare/code/opencode-qq-bot/logs/bot-error.log
+
+# 安全限制
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,5 +1,5 @@
 import type { OpencodeClient } from "./client.js"
-import type { Event } from "@opencode-ai/sdk"
+import type { Event, Session, Agent, Project } from "@opencode-ai/sdk"
 
 export interface AdapterSession {
   id: string
@@ -23,6 +23,7 @@ export interface AdapterAgent {
 export interface PromptParams {
   sessionId: string
   text: string
+  directory?: string
   model?: { providerID: string; modelID: string }
   agent?: string
 }
@@ -31,52 +32,81 @@ export interface SSEStream {
   stream: AsyncIterable<Event>
 }
 
-function toAdapterSession(raw: Record<string, unknown>): AdapterSession | null {
-  const id = typeof raw.id === "string" ? raw.id : undefined
-  if (!id) return null
+export interface AdapterProject {
+  id: string
+  worktree: string
+  vcs?: string
+  createdAt: number
+}
+
+export interface AdapterAllSession {
+  id: string
+  title: string
+  directory: string
+  projectWorktree: string
+  createdAt: number
+  updatedAt: number
+}
+
+// ---- helpers ----
+
+function dirQuery(directory?: string): { query?: { directory: string } } {
+  return directory ? { query: { directory } } : {}
+}
+
+// ---- conversion ----
+
+function toAdapterSession(raw: Session): AdapterSession {
   return {
-    id,
-    title: typeof raw.title === "string" ? raw.title : id,
-    createdAt: typeof raw.time === "object" && raw.time !== null
-      ? Number((raw.time as Record<string, unknown>).created ?? 0)
-      : 0,
-    updatedAt: typeof raw.time === "object" && raw.time !== null
-      ? Number((raw.time as Record<string, unknown>).updated ?? 0)
-      : 0,
+    id: raw.id,
+    title: raw.title ?? raw.id,
+    createdAt: raw.time?.created ?? 0,
+    updatedAt: raw.time?.updated ?? 0,
   }
 }
 
-export async function createSession(client: OpencodeClient): Promise<AdapterSession> {
-  const result = await client.session.create({})
-  const raw = (result.data ?? result) as unknown as Record<string, unknown>
-  const session = toAdapterSession(raw)
-  if (!session) throw new Error("session.create returned invalid data")
-  return session
+function toAdapterProject(raw: Project): AdapterProject {
+  return {
+    id: raw.id,
+    worktree: raw.worktree,
+    vcs: raw.vcs as string | undefined,
+    createdAt: raw.time?.created ?? 0,
+  }
 }
 
-export async function listSessions(client: OpencodeClient): Promise<AdapterSession[]> {
-  const result = await client.session.list()
-  const arr = Array.isArray(result.data) ? result.data : Array.isArray(result) ? result : []
-  return (arr as Record<string, unknown>[])
-    .map(toAdapterSession)
-    .filter((s): s is AdapterSession => s !== null)
+// ---- session CRUD (v1 SDK, directory-aware) ----
+
+export async function createSession(client: OpencodeClient, directory?: string): Promise<AdapterSession> {
+  const result = await client.session.create({ ...dirQuery(directory) })
+  const raw = (result.data ?? result) as Session
+  if (!raw.id) throw new Error("session.create returned invalid data")
+  return toAdapterSession(raw)
 }
 
-export async function abortSession(client: OpencodeClient, sessionId: string): Promise<void> {
-  await client.session.abort({ path: { id: sessionId } })
+export async function listSessions(client: OpencodeClient, directory?: string): Promise<AdapterSession[]> {
+  const result = await client.session.list({ ...dirQuery(directory) })
+  const arr = (result.data ?? result) as Session[]
+  if (!Array.isArray(arr)) return []
+  return arr.map(toAdapterSession)
 }
 
-export async function updateSessionTitle(client: OpencodeClient, sessionId: string, title: string): Promise<AdapterSession> {
-  const result = await client.session.update({ path: { id: sessionId }, body: { title } })
-  const raw = (result.data ?? result) as unknown as Record<string, unknown>
-  const session = toAdapterSession(raw)
-  if (!session) throw new Error("session.update returned invalid data")
-  return session
+export async function abortSession(client: OpencodeClient, sessionId: string, directory?: string): Promise<void> {
+  await client.session.abort({ path: { id: sessionId }, ...dirQuery(directory) })
 }
+
+export async function updateSessionTitle(client: OpencodeClient, sessionId: string, title: string, directory?: string): Promise<AdapterSession> {
+  const result = await client.session.update({ path: { id: sessionId }, body: { title }, ...dirQuery(directory) })
+  const raw = (result.data ?? result) as Session
+  if (!raw.id) throw new Error("session.update returned invalid data")
+  return toAdapterSession(raw)
+}
+
+// ---- prompt ----
 
 export async function promptAsync(client: OpencodeClient, params: PromptParams): Promise<void> {
   await client.session.promptAsync({
     path: { id: params.sessionId },
+    ...dirQuery(params.directory),
     body: {
       parts: [{ type: "text", text: params.text }],
       ...(params.model ? { model: params.model } : {}),
@@ -85,9 +115,11 @@ export async function promptAsync(client: OpencodeClient, params: PromptParams):
   })
 }
 
+// ---- models ----
+
 export async function listProviderModels(client: OpencodeClient): Promise<AdapterModel[]> {
   const result = await client.provider.list()
-  const data = (result.data ?? result) as unknown as Record<string, unknown>
+  const data = (result.data ?? result) as Record<string, unknown>
   const allProviders = Array.isArray(data.all) ? data.all as Record<string, unknown>[] : []
   const models: AdapterModel[] = []
 
@@ -98,6 +130,7 @@ export async function listProviderModels(client: OpencodeClient): Promise<Adapte
     const rawModels = provider.models
     if (!rawModels || typeof rawModels !== "object") continue
 
+    // 新 SDK 中 models 是 { [key: string]: Model } 对象，非数组
     const entries = Array.isArray(rawModels) ? rawModels : Object.values(rawModels)
     for (const m of entries) {
       if (!m || typeof m !== "object") continue
@@ -112,23 +145,62 @@ export async function listProviderModels(client: OpencodeClient): Promise<Adapte
   return models
 }
 
+// ---- agents ----
+
 export async function listAgents(client: OpencodeClient): Promise<AdapterAgent[]> {
   const result = await client.app.agents()
-  const arr = Array.isArray(result.data) ? result.data : Array.isArray(result) ? result : []
-  return (arr as Record<string, unknown>[])
+  const arr = (result.data ?? result) as Agent[]
+  if (!Array.isArray(arr)) return []
+  return arr
     .map((a) => {
-      const id = typeof a.id === "string" ? a.id : typeof a.name === "string" ? a.name : undefined
+      // 新 SDK Agent 类型使用 name 字段作为标识符
+      const id = a.name ?? (a as Record<string, unknown>).id as string | undefined
       if (!id) return null
-      const desc = typeof a.description === "string" ? a.description : undefined
+      const desc = a.description
       return { id, label: desc ? `${id} - ${desc}` : id }
     })
     .filter((a): a is AdapterAgent => a !== null)
 }
 
+// ---- projects ----
+
+export async function listProjects(client: OpencodeClient): Promise<AdapterProject[]> {
+  const result = await client.project.list({})
+  const arr = (result.data ?? result) as Project[]
+  if (!Array.isArray(arr)) return []
+  return arr.map(toAdapterProject)
+}
+
+// ---- cross-project sessions (experimental API) ----
+
+export async function listAllSessions(baseUrl: string): Promise<AdapterAllSession[]> {
+  const url = `${baseUrl.replace(/\/+$/, "")}/experimental/session`
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`experimental/session 返回 ${res.status}`)
+  const arr = await res.json() as Array<Record<string, unknown>>
+  if (!Array.isArray(arr)) return []
+  return arr.map((s) => {
+    const proj = (s.project ?? {}) as Record<string, unknown>
+    const time = (s.time ?? {}) as Record<string, unknown>
+    return {
+      id: String(s.id ?? ""),
+      title: String(s.title ?? s.id ?? ""),
+      directory: String(s.directory ?? ""),
+      projectWorktree: String(proj.worktree ?? ""),
+      createdAt: Number(time.created ?? 0),
+      updatedAt: Number(time.updated ?? 0),
+    }
+  })
+}
+
+// ---- events ----
+
 export async function subscribeEvents(client: OpencodeClient): Promise<SSEStream> {
   const result = await client.event.subscribe()
   return { stream: result.stream as AsyncIterable<Event> }
 }
+
+// ---- health ----
 
 export async function healthCheck(client: OpencodeClient): Promise<void> {
   try {

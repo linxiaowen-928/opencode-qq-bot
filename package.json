@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "bun run --watch src/index.ts",
     "start": "bun run src/index.ts",
+    "start:node": "npx tsx src/index.ts",
     "typecheck": "tsc --noEmit"
   },
   "files": [
@@ -23,12 +24,13 @@
     "url": "https://github.com/gbwssve/opencode-qq-bot"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "^1.2.21",
+    "@opencode-ai/sdk": "^1.14.27",
     "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/ws": "^8.5.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.0"
   }
 }

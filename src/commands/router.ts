@@ -8,6 +8,8 @@ import {
   handleModel,
   handleAgent,
   handleRename,
+  handleConnect,
+  handleProjects,
 } from "./handlers.js"
 import { buildHelpText } from "./help.js"
 
@@ -20,6 +22,8 @@ const SHORT_ALIASES: Record<string, string> = {
   md: "model",
   ag: "agent",
   rn: "rename",
+  cn: "connect",
+  pl: "projects",
 }
 
 export function isCommand(content: string): boolean {
@@ -70,6 +74,10 @@ export async function handleCommand(ctx: MessageContext, cmdCtx: CommandContext)
       return handleAgent(ctx, parsed.args, cmdCtx)
     case "rename":
       return handleRename(ctx, parsed.args, cmdCtx)
+    case "connect":
+      return handleConnect(ctx, parsed.args, cmdCtx)
+    case "projects":
+      return handleProjects(ctx, parsed.args, cmdCtx)
     default:
       return `不支持的命令：${parsed.name}\n发送 hp 或 /help 查看可用命令`
   }
@@ -96,8 +104,27 @@ export async function handlePendingSelection(
   cmdCtx.pendingSelections.delete(userId)
 
   if (pending.type === "session") {
+    // 如果该 session 有 directory 信息，自动切换 project directory
+    if (item.directory) {
+      const currentDir = cmdCtx.sessions.getProjectDirectory()
+      if (currentDir !== item.directory) {
+        cmdCtx.setProjectDirectory(item.directory)
+      }
+    }
     cmdCtx.sessions.switchSession(userId, item.id, item.label)
     return `已切换到会话：${item.label}`
+  }
+
+  if (pending.type === "project") {
+    try {
+      cmdCtx.setProjectDirectory(item.id)
+    } catch (err) {
+      return `切换 project 失败：${err instanceof Error ? err.message : String(err)}`
+    }
+    return [
+      `已切换到 project：${item.label}`,
+      "本地 session 缓存已清空，发送 sn 查看新 project 的会话列表",
+    ].join("\n")
   }
 
   const model = splitModelId(item.id)

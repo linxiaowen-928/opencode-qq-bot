@@ -15,6 +15,7 @@ export interface Config {
   opencode: {
     baseUrl: string
     externalUrl: boolean
+    projectDirectory?: string
   }
   allowedUsers: string[]
   maxReplyLength: number
@@ -34,6 +35,19 @@ function askTwo(q1: string, q2: string): Promise<[string, string]> {
         rl.close()
         resolve([a1.trim(), a2.trim()])
       })
+    })
+  })
+}
+
+function askOne(question: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let done = false
+    const rl = createInterface({ input: process.stdin, output: process.stdout })
+    rl.on("close", () => { if (!done) reject(new Error("输入被中断")) })
+    rl.question(question, (ans) => {
+      done = true
+      rl.close()
+      resolve(ans.trim())
     })
   })
 }
@@ -61,12 +75,18 @@ export async function ensureConfig(): Promise<void> {
     throw new Error("App ID 和 App Secret 不能为空")
   }
 
+  console.log("\n可选：配置外部 opencode 地址，用于看到本机 opencode 的全部 session")
+  console.log("  - 本机 opencode：http://127.0.0.1:4096（需先执行 opencode serve）")
+  console.log("  - 跨机器请走 SSH 隧道 / frp 等，不要把 opencode 直接暴露公网")
+  console.log("  - 留空则启动嵌入式 opencode（只能看到 bot 自己创建的 session）\n")
+  const baseUrl = await askOne("OPENCODE_BASE_URL（回车跳过）: ")
+
   mkdirSync(CONFIG_DIR, { recursive: true })
   const envContent = [
     `QQ_APP_ID=${appId}`,
     `QQ_APP_SECRET=${appSecret}`,
     `QQ_SANDBOX=false`,
-    `# OPENCODE_BASE_URL=http://localhost:4096`,
+    baseUrl ? `OPENCODE_BASE_URL=${baseUrl}` : `# OPENCODE_BASE_URL=http://127.0.0.1:4096`,
     `ALLOWED_USERS=`,
     `MAX_REPLY_LENGTH=3000`,
   ].join("\n") + "\n"
@@ -76,6 +96,7 @@ export async function ensureConfig(): Promise<void> {
 
   process.env.QQ_APP_ID = appId
   process.env.QQ_APP_SECRET = appSecret
+  if (baseUrl) process.env.OPENCODE_BASE_URL = baseUrl
 }
 
 function loadEnvFile(path: string): void {
@@ -114,6 +135,7 @@ export function loadConfig(): Config {
     opencode: {
       baseUrl: process.env.OPENCODE_BASE_URL?.trim() || "",
       externalUrl: !!process.env.OPENCODE_BASE_URL?.trim(),
+      projectDirectory: process.env.OPENCODE_PROJECT_DIRECTORY?.trim() || undefined,
     },
     allowedUsers,
     maxReplyLength: parseInt(process.env.MAX_REPLY_LENGTH ?? "3000", 10),

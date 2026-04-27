@@ -13,16 +13,26 @@ export class SessionManager {
   private sessions = new Map<string, UserSession>()
   private userSessionHistory = new Map<string, Array<{ id: string; title: string }>>()
   private client: OpencodeClient
+  private projectDirectory: string | undefined
 
-  constructor(client: OpencodeClient) {
+  constructor(client: OpencodeClient, projectDirectory?: string) {
     this.client = client
+    this.projectDirectory = projectDirectory
+  }
+
+  getProjectDirectory(): string | undefined { return this.projectDirectory }
+
+  /** 切换当前 project；同时清空所有用户的 session 映射（旧 sessionId 在新 project 无意义）。 */
+  setProjectDirectory(directory: string | undefined): void {
+    this.projectDirectory = directory
+    this.resetAll()
   }
 
   async getOrCreate(userId: string): Promise<UserSession> {
     const existing = this.sessions.get(userId)
     if (existing) return existing
 
-    const created = await createSession(this.client)
+    const created = await createSession(this.client, this.projectDirectory)
     const session: UserSession = { sessionId: created.id, title: created.title }
     this.sessions.set(userId, session)
     this.trackSession(userId, created.id, created.title)
@@ -30,7 +40,7 @@ export class SessionManager {
   }
 
   async createNew(userId: string): Promise<UserSession> {
-    const created = await createSession(this.client)
+    const created = await createSession(this.client, this.projectDirectory)
     const session: UserSession = { sessionId: created.id, title: created.title }
     this.sessions.set(userId, session)
     this.trackSession(userId, created.id, created.title)
@@ -47,6 +57,7 @@ export class SessionManager {
       sessionId,
       title,
     })
+    this.trackSession(userId, sessionId, title ?? sessionId)
   }
 
   getSession(userId: string): UserSession | undefined {
@@ -87,6 +98,15 @@ export class SessionManager {
     if (current && current.sessionId === sessionId) {
       current.title = title
     }
+  }
+
+  /**
+   * 清空所有用户的 session 映射与历史。
+   * 用在 /connect 切换到新的 opencode 后，因为旧 sessionId 在新实例上无意义。
+   */
+  resetAll(): void {
+    this.sessions.clear()
+    this.userSessionHistory.clear()
   }
 
   private trackSession(userId: string, sessionId: string, title: string): void {

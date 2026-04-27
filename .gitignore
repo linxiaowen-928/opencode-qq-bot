@@ -5,3 +5,7 @@ dist/
 .DS_Store
 bun.lockb
 .npmrc
+logs/
+*.pid
+bun.lock
+package-lock.json
