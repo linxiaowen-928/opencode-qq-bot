@@ -1,5 +1,8 @@
 import type { OpencodeClient } from "./client.js"
 import { createSession } from "./adapter.js"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs"
+import { join } from "path"
+import { homedir } from "os"
 
 interface UserSession {
   sessionId: string
@@ -8,6 +11,13 @@ interface UserSession {
   providerId?: string
   agentId?: string
 }
+
+interface PersistedState {
+  sessions: Array<{ userId: string; sessionId: string; title?: string }>
+  projectDirectory?: string
+}
+
+const STATE_FILE = join(homedir(), ".openqq", "session_state.json")
 
 export class SessionManager {
   private sessions = new Map<string, UserSession>()
@@ -18,6 +28,50 @@ export class SessionManager {
   constructor(client: OpencodeClient, projectDirectory?: string) {
     this.client = client
     this.projectDirectory = projectDirectory
+    this.loadFromDisk()
+  }
+
+  /**
+   * 持久化当前状态到 ~/.openqq/session_state.json，使重启后能恢复会话映射。
+   */
+  private saveToDisk(): void {
+    try {
+      const state: PersistedState = {
+        sessions: Array.from(this.sessions.entries()).map(([userId, s]) => ({
+          userId,
+          sessionId: s.sessionId,
+          title: s.title,
+        })),
+        projectDirectory: this.projectDirectory,
+      }
+      mkdirSync(join(homedir(), ".openqq"), { recursive: true })
+      writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), "utf-8")
+    } catch (err) {
+      console.warn(`[sessions] saveToDisk failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
+  /**
+   * 启动时从磁盘加载上次的 session 映射和 projectDirectory。
+   */
+  private loadFromDisk(): void {
+    try {
+      if (!existsSync(STATE_FILE)) return
+      const raw = readFileSync(STATE_FILE, "utf-8")
+      const state: PersistedState = JSON.parse(raw)
+      for (const entry of state.sessions) {
+        this.sessions.set(entry.userId, {
+          sessionId: entry.sessionId,
+          title: entry.title,
+        })
+      }
+      if (state.projectDirectory) {
+        this.projectDirectory = state.projectDirectory
+      }
+      console.log(`[sessions] loaded ${state.sessions.length} session mappings from disk, projectDir=${this.projectDirectory || "(none)"}`)
+    } catch (err) {
+      console.warn(`[sessions] loadFromDisk failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
   }
 
   getProjectDirectory(): string | undefined { return this.projectDirectory }
@@ -40,6 +94,7 @@ export class SessionManager {
     const session: UserSession = { sessionId: created.id, title: created.title }
     this.sessions.set(userId, session)
     this.trackSession(userId, created.id, created.title)
+    this.saveToDisk()
     return session
   }
 
@@ -48,6 +103,7 @@ export class SessionManager {
     const session: UserSession = { sessionId: created.id, title: created.title }
     this.sessions.set(userId, session)
     this.trackSession(userId, created.id, created.title)
+    this.saveToDisk()
     return session
   }
 
@@ -64,6 +120,7 @@ export class SessionManager {
       title,
     })
     this.trackSession(userId, sessionId, title ?? sessionId)
+    this.saveToDisk()
   }
 
   getSession(userId: string): UserSession | undefined {
@@ -104,15 +161,16 @@ export class SessionManager {
     if (current && current.sessionId === sessionId) {
       current.title = title
     }
+    this.saveToDisk()
   }
 
   /**
    * 清空所有用户的 session 映射与历史。
-   * 用在 /connect 切换到新的 opencode 后，因为旧 sessionId 在新实例上无意义。
    */
   resetAll(): void {
     this.sessions.clear()
     this.userSessionHistory.clear()
+    this.saveToDisk()
   }
 
   private trackSession(userId: string, sessionId: string, title: string): void {
