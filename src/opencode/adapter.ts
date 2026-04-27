@@ -104,6 +104,7 @@ export async function updateSessionTitle(client: OpencodeClient, sessionId: stri
 // ---- prompt ----
 
 export async function promptAsync(client: OpencodeClient, params: PromptParams): Promise<void> {
+  console.log(`[adapter] promptAsync sessionId=${params.sessionId.slice(0,12)}... dir=${params.directory || '(none)'}`)
   await client.session.promptAsync({
     path: { id: params.sessionId },
     ...dirQuery(params.directory),

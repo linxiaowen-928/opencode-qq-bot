@@ -105,12 +105,15 @@ export async function handlePendingSelection(
 
   if (pending.type === "session") {
     // 如果该 session 有 directory 信息，自动切换 project directory
+    console.log(`[router] selectSession: directory="${item.directory || '(empty)'}" currentDir="${cmdCtx.sessions.getProjectDirectory() || '(none)'}"`)
     if (item.directory) {
       const currentDir = cmdCtx.sessions.getProjectDirectory()
       if (currentDir !== item.directory) {
+        console.log(`[router] switching project dir: "${currentDir || 'none'}" -> "${item.directory}"`)
         cmdCtx.setProjectDirectory(item.directory)
       }
     }
+    cmdCtx.sessions.switchSession(userId, item.id, item.label)
     cmdCtx.sessions.switchSession(userId, item.id, item.label)
     return `已切换到会话：${item.label}`
   }
