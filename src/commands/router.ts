@@ -10,6 +10,10 @@ import {
   handleRename,
   handleConnect,
   handleProjects,
+  handlePush,
+  handlePop,
+  handleReplay,
+  handleBookmarks,
 } from "./handlers.js"
 import { buildHelpText } from "./help.js"
 
@@ -24,6 +28,10 @@ const SHORT_ALIASES: Record<string, string> = {
   rn: "rename",
   cn: "connect",
   pl: "projects",
+  ps: "push",
+  pp: "pop",
+  rp: "replay",
+  bm: "bookmarks",
 }
 
 export function isCommand(content: string): boolean {
@@ -78,6 +86,14 @@ export async function handleCommand(ctx: MessageContext, cmdCtx: CommandContext)
       return handleConnect(ctx, parsed.args, cmdCtx)
     case "projects":
       return handleProjects(ctx, parsed.args, cmdCtx)
+    case "push":
+      return handlePush(ctx, parsed.args, cmdCtx)
+    case "pop":
+      return handlePop(ctx, parsed.args, cmdCtx)
+    case "replay":
+      return handleReplay(ctx, parsed.args, cmdCtx)
+    case "bookmarks":
+      return handleBookmarks(ctx, parsed.args, cmdCtx)
     default:
       return `不支持的命令：${parsed.name}\n发送 hp 或 /help 查看可用命令`
   }

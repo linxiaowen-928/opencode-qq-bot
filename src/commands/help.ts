@@ -9,6 +9,10 @@ export function buildHelpText(): string {
     "md | /model - 列出/切换模型",
     "ag | /agent - 列出/切换 Agent",
     "rn | /rename <name> - 重命名会话",
+    "ps | /push [name] - 保存书签并创建新会话（原会话继续运行）",
+    "pp | /pop - 回到上一个书签 session",
+    "rp | /replay - 重新输出当前 session 的最后一次 AI 回复",
+    "bm | /bookmarks - 列出书签栈",
     "cn | /connect <url> - 切换到另一台 opencode（会清空本地 session 缓存）",
     "pl | /projects - 所有 project 列表，回复序号切换当前 project",
   ].join("\n")

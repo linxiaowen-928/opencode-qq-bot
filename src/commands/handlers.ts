@@ -311,3 +311,65 @@ function formatRelativeTime(timestamp: number): string {
   const d = new Date(timestamp)
   return `${d.getMonth() + 1}/${d.getDate()}`
 }
+
+export async function handlePush(ctx: MessageContext, args: string, cmdCtx: CommandContext): Promise<string> {
+  const name = args.trim() || "新任务"
+  const current = cmdCtx.sessions.getSession(ctx.userId)
+  if (!current) {
+    // 还没有 session 就先创建一个
+    await cmdCtx.sessions.getOrCreate(ctx.userId)
+  }
+  // 保存当前 session 到书签
+  cmdCtx.sessions.pushBookmark(ctx.userId, name)
+  // 创建新 session
+  const session = await cmdCtx.sessions.createNew(ctx.userId)
+  return [
+    `已保存书签：${name}（原 session 继续运行）`,
+    `新会话：${session.title || "未命名"} (${session.sessionId.slice(0, 12)}...)`,
+  ].join("\n")
+}
+
+export async function handlePop(ctx: MessageContext, _args: string, cmdCtx: CommandContext): Promise<string> {
+  const entry = cmdCtx.sessions.popBookmark(ctx.userId)
+  if (!entry) {
+    return "书签栈为空，没有可返回的 session"
+  }
+  // 恢复 session
+  cmdCtx.sessions.switchSession(ctx.userId, entry.sessionId, entry.title)
+  // 恢复 project 目录
+  if (entry.projectDirectory) {
+    const currentDir = cmdCtx.sessions.getProjectDirectory()
+    if (currentDir !== entry.projectDirectory) {
+      cmdCtx.setProjectDirectory(entry.projectDirectory)
+    }
+  }
+  return [
+    `已回到上一个 session`,
+    `当前：${entry.title || entry.sessionId.slice(0, 12)}...`,
+    "注意：原 project 目录已自动恢复",
+  ].join("\n")
+}
+
+export async function handleReplay(ctx: MessageContext, _args: string, cmdCtx: CommandContext): Promise<string> {
+  const current = cmdCtx.sessions.getSession(ctx.userId)
+  if (!current) {
+    return "当前没有活跃的 session"
+  }
+  const reply = cmdCtx.lastReplies.get(current.sessionId)
+  if (!reply || !reply.trim()) {
+    return "当前 session 还没有完整的 AI 回复可重放"
+  }
+  return `[回复重放] ${reply}`
+}
+
+export async function handleBookmarks(ctx: MessageContext, _args: string, cmdCtx: CommandContext): Promise<string> {
+  const bookmarks = cmdCtx.sessions.getBookmarks(ctx.userId)
+  if (bookmarks.length === 0) {
+    return "书签栈为空"
+  }
+  const lines = bookmarks.map((b, i) => {
+    const label = b.title || b.sessionId.slice(0, 12)
+    return `${i + 1}. ${label} (${b.projectDirectory ? b.projectDirectory.split("/").pop() : "默认 project"})`
+  })
+  return ["书签列表（最新在最底部）：", ...lines.reverse(), "发 pp 返回上一个"].join("\n")
+}

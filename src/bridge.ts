@@ -46,6 +46,7 @@ export function createBridge(
   const pendingOnStartup = new Set(sessions.getPendingPromptsOnStartup())
   console.log(`[bridge] ${pendingOnStartup.size} users had pending prompts on startup`)
   const pendingSelections = new Map<string, PendingSelection>()
+  const lastReplies = new Map<string, string>()
   const commandContext: CommandContext = {
     config,
     client,
@@ -56,6 +57,7 @@ export function createBridge(
     pendingSelections,
     reconnect,
     setProjectDirectory,
+    lastReplies,
   }
 
   // 核心：处理一条 prompt（包括队列排空）
@@ -95,6 +97,7 @@ export function createBridge(
         },
         onDone: async (text) => {
           if (text.trim()) {
+            lastReplies.set(session.sessionId, text)
             await sendReply(ctx, text)
           }
         },

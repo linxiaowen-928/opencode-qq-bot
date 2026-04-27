@@ -5,16 +5,7 @@ import { SessionManager } from "../opencode/sessions.js"
 
 export const SELECTION_TTL_MS = 60_000
 
-/**
- * 切换 opencode 连接地址的回调。实现位于 index.ts / bridge.ts：
- * - 校验 + 调用 reconnectClientRef
- * - 重启 EventRouter
- * - 清空 SessionManager 缓存
- * - 持久化到 ~/.openqq/.env
- * 成功返回新地址，失败 throw Error（由 handler 捕获生成回复）。
- */
 export type ReconnectFn = (newBaseUrl: string) => Promise<void>
-
 export type SetProjectDirectoryFn = (directory: string | undefined) => void
 
 export interface CommandContext {
@@ -28,6 +19,8 @@ export interface CommandContext {
   pendingSelections: Map<string, PendingSelection>
   reconnect: ReconnectFn
   setProjectDirectory: SetProjectDirectoryFn
+  /** sessionId → 最后一次 AI 回复（用于 /replay） */
+  lastReplies: Map<string, string>
 }
 
 export interface PendingSelection {

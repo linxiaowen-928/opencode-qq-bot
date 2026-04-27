@@ -12,10 +12,17 @@ interface UserSession {
   agentId?: string
 }
 
+export interface BookmarkEntry {
+  sessionId: string
+  title?: string
+  projectDirectory?: string
+}
+
 interface PersistedState {
   sessions: Array<{ userId: string; sessionId: string; title?: string }>
   projectDirectory?: string
   pendingPrompts?: Array<{ userId: string; timestamp: number }>
+  bookmarks?: Array<{ userId: string; stack: BookmarkEntry[] }>
 }
 
 const STATE_FILE = join(homedir(), ".openqq", "session_state.json")
@@ -23,9 +30,10 @@ const STATE_FILE = join(homedir(), ".openqq", "session_state.json")
 export class SessionManager {
   private sessions = new Map<string, UserSession>()
   private userSessionHistory = new Map<string, Array<{ id: string; title: string }>>()
+  /** 书签栈：userId → BookmarkEntry[] */
+  private bookmarkStacks = new Map<string, BookmarkEntry[]>()
   private client: OpencodeClient
   private projectDirectory: string | undefined
-  /** 重启前正在处理中的用户（异常中断时推断） */
   private pendingPrompts = new Set<string>()
 
   constructor(client: OpencodeClient, projectDirectory?: string) {
@@ -34,9 +42,6 @@ export class SessionManager {
     this.loadFromDisk()
   }
 
-  /**
-   * 持久化当前状态到 ~/.openqq/session_state.json，使重启后能恢复会话映射。
-   */
   private saveToDisk(): void {
     try {
       const state: PersistedState = {
@@ -49,6 +54,10 @@ export class SessionManager {
         pendingPrompts: this.pendingPrompts.size > 0
           ? Array.from(this.pendingPrompts).map((userId) => ({ userId, timestamp: Date.now() }))
           : undefined,
+        bookmarks: Array.from(this.bookmarkStacks.entries()).map(([userId, stack]) => ({
+          userId,
+          stack,
+        })),
       }
       mkdirSync(join(homedir(), ".openqq"), { recursive: true })
       writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), "utf-8")
@@ -57,9 +66,6 @@ export class SessionManager {
     }
   }
 
-  /**
-   * 启动时从磁盘加载上次的 session 映射和 projectDirectory。
-   */
   private loadFromDisk(): void {
     try {
       if (!existsSync(STATE_FILE)) return
@@ -79,7 +85,12 @@ export class SessionManager {
           this.pendingPrompts.add(p.userId)
         }
       }
-      console.log(`[sessions] loaded ${state.sessions.length} session mappings, ${this.pendingPrompts.size} pending prompts from disk, projectDir=${this.projectDirectory || "(none)"}`)
+      if (state.bookmarks) {
+        for (const b of state.bookmarks) {
+          this.bookmarkStacks.set(b.userId, b.stack)
+        }
+      }
+      console.log(`[sessions] loaded ${state.sessions.length} sessions, ${this.pendingPrompts.size} pending, ${state.bookmarks?.length ?? 0} bookmark stacks`)
     } catch (err) {
       console.warn(`[sessions] loadFromDisk failed: ${err instanceof Error ? err.message : String(err)}`)
     }
@@ -87,7 +98,6 @@ export class SessionManager {
 
   getProjectDirectory(): string | undefined { return this.projectDirectory }
 
-  /** 切换当前 project；同时清空所有用户的 session 映射（旧 sessionId 在新 project 无意义）。 */
   setProjectDirectory(directory: string | undefined): void {
     this.projectDirectory = directory
     this.resetAll()
@@ -99,7 +109,6 @@ export class SessionManager {
       console.log(`[sessions] getOrCreate REUSE userId=${userId.slice(0, 8)}... sessionId=${existing.sessionId.slice(0, 12)}... dir=${this.projectDirectory || "(default)"}`)
       return existing
     }
-
     console.log(`[sessions] getOrCreate NEW userId=${userId.slice(0, 8)}... dir=${this.projectDirectory || "(default)"}`)
     const created = await createSession(this.client, this.projectDirectory)
     const session: UserSession = { sessionId: created.id, title: created.title }
@@ -175,13 +184,44 @@ export class SessionManager {
     this.saveToDisk()
   }
 
-  /**
-   * 清空所有用户的 session 映射与历史。
-   */
   resetAll(): void {
     this.sessions.clear()
     this.userSessionHistory.clear()
     this.saveToDisk()
+  }
+
+  // ---- 书签栈操作 ----
+
+  /** 返回用户的书签栈（浅拷贝）。 */
+  getBookmarks(userId: string): BookmarkEntry[] {
+    return this.bookmarkStacks.get(userId) ?? []
+  }
+
+  /** 把当前 session 和 project 压入书签栈，然后创建新 session。 */
+  pushBookmark(userId: string, name: string): BookmarkEntry {
+    const current = this.sessions.get(userId)
+    const entry: BookmarkEntry = {
+      sessionId: current?.sessionId ?? "",
+      title: current?.title ?? name,
+      projectDirectory: this.projectDirectory,
+    }
+    const stack = this.bookmarkStacks.get(userId) ?? []
+    stack.push(entry)
+    this.bookmarkStacks.set(userId, stack)
+    this.saveToDisk()
+    return entry
+  }
+
+  /** 弹出书签栈顶，返回被保存的记录。如果栈为空返回 undefined。 */
+  popBookmark(userId: string): BookmarkEntry | undefined {
+    const stack = this.bookmarkStacks.get(userId)
+    if (!stack || stack.length === 0) return undefined
+    const entry = stack.pop()!
+    if (stack.length === 0) {
+      this.bookmarkStacks.delete(userId)
+    }
+    this.saveToDisk()
+    return entry
   }
 
   private trackSession(userId: string, sessionId: string, title: string): void {
@@ -192,19 +232,16 @@ export class SessionManager {
     }
   }
 
-  /** 记录一个用户正在处理 prompt，重启后可检测到中断。 */
   savePendingPrompt(userId: string): void {
     this.pendingPrompts.add(userId)
     this.saveToDisk()
   }
 
-  /** 清除用户的 pending 标记（prompt 正常完成时调用）。 */
   clearPendingPrompt(userId: string): void {
     this.pendingPrompts.delete(userId)
     this.saveToDisk()
   }
 
-  /** 返回在本次启动前有未完成 prompt 的用户列表。 */
   getPendingPromptsOnStartup(): string[] {
     return Array.from(this.pendingPrompts)
   }
