@@ -18,7 +18,6 @@ import {
 } from "./commands/index.js"
 
 const RESPONSE_TIMEOUT_MS = 60 * 60 * 1000   // 60 分钟
-const PROGRESS_INTERVAL_MS = 60 * 1000        // 1 分钟进度推送间隔
 
 interface StreamCallbacks {
   onFirstChunk: () => Promise<void>
@@ -89,6 +88,7 @@ export function createBridge(
           }
         },
         onProgress: async (text) => {
+          await sendReply(ctx, text)
           const prefix = "[AI 输出中] "
           const preview = text.length > 500 ? text.slice(0, 500) + "..." : text
           await sendReply(ctx, prefix + preview)
@@ -207,8 +207,13 @@ function waitForSessionReply(
 ): Promise<void> {
   let settled = false
   let latestText = ""
+  let lastSentLength = 0
+  let lastSendTime = 0
   let hasReceivedChunk = false
-  let progressTimerId: ReturnType<typeof setInterval> | null = null
+
+  // 增量推送：有足够新内容且距上次发送超过 30 秒时推送
+  const MIN_DELTA = 200
+  const MIN_INTERVAL = 30_000
 
   return new Promise<void>((resolve, reject) => {
     const timeoutId = setTimeout(() => {
@@ -218,7 +223,6 @@ function waitForSessionReply(
     const finish = (done: () => void): void => {
       if (settled) return
       settled = true
-      if (progressTimerId) clearInterval(progressTimerId)
       clearTimeout(timeoutId)
       router.unregister(sessionId)
       done()
@@ -233,11 +237,24 @@ function waitForSessionReply(
           if (!hasReceivedChunk) {
             hasReceivedChunk = true
             void callbacks.onFirstChunk()
-            progressTimerId = setInterval(() => {
-              if (!settled && latestText) {
-                void callbacks.onProgress(latestText)
-              }
-            }, PROGRESS_INTERVAL_MS)
+            lastSendTime = Date.now()
+            // 首次推送头部内容
+            const head = latestText.slice(0, MIN_DELTA)
+            if (head) {
+              lastSentLength = head.length
+              void callbacks.onProgress(head)
+            }
+            return
+          }
+
+          // 后续：增量推送
+          const now = Date.now()
+          const newDelta = latestText.length - lastSentLength
+          if (newDelta >= MIN_DELTA && now - lastSendTime >= MIN_INTERVAL) {
+            const delta = latestText.slice(lastSentLength)
+            lastSentLength = latestText.length
+            lastSendTime = now
+            void callbacks.onProgress(delta)
           }
         }
         return
@@ -245,7 +262,9 @@ function waitForSessionReply(
 
       if (event.type === "session.idle") {
         finish(() => {
-          void callbacks.onDone(latestText || "(AI 未返回内容)").then(() => resolve())
+          const remaining = latestText.slice(lastSentLength)
+          const finalText = remaining || latestText || "(AI 未返回内容)"
+          void callbacks.onDone(finalText).then(() => resolve())
         })
         return
       }
