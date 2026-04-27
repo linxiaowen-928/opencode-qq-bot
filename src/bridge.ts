@@ -232,7 +232,7 @@ function waitForSessionReply(
     router.register(sessionId, (event: Event) => {
       if (event.type === "message.part.updated") {
         const part = event.properties.part
-        if (part.type === "text") {
+        if (part.type === "text" || part.type === "reasoning") {
           latestText = part.text
           if (!hasReceivedChunk) {
             hasReceivedChunk = true
