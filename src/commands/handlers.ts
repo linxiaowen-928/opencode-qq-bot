@@ -359,7 +359,7 @@ export async function handleReplay(ctx: MessageContext, _args: string, cmdCtx: C
   if (!reply || !reply.trim()) {
     return "当前 session 还没有完整的 AI 回复可重放"
   }
-  return `[回复重放] ${reply}`
+  return reply
 }
 
 export async function handleBookmarks(ctx: MessageContext, _args: string, cmdCtx: CommandContext): Promise<string> {
