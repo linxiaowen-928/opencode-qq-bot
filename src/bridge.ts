@@ -8,7 +8,6 @@ import { EventRouter } from "./opencode/events.js"
 import { SessionManager } from "./opencode/sessions.js"
 import type { Event } from "@opencode-ai/sdk"
 import {
-  buildHelpText,
   handleCommand,
   handlePendingSelection,
   isCommand,
@@ -22,11 +21,8 @@ const RESPONSE_TIMEOUT_MS = 60 * 60 * 1000   // 60 分钟
 const PROGRESS_INTERVAL_MS = 60 * 1000        // 1 分钟进度推送间隔
 
 interface StreamCallbacks {
-  /** 收到第一个流式文本块时调用（用于发 "处理中" 提示） */
   onFirstChunk: () => Promise<void>
-  /** 每 PROGRESS_INTERVAL_MS 调用一次，传入当前积累的文本 */
   onProgress: (text: string) => Promise<void>
-  /** session.idle 时调用，传入最终完整文本 */
   onDone: (text: string) => Promise<void>
 }
 
@@ -66,13 +62,11 @@ export function createBridge(
       }
 
       const content = ctx.content.trim()
-      if (!content) {
-        return
-      }
+      if (!content) return
 
       if (!greeted.has(ctx.userId)) {
         greeted.add(ctx.userId)
-        await sendReply(ctx, buildHelpText())
+        // 不发使用说明了，用户自己发 hp 查看
       }
 
       if (isCommand(content)) {
@@ -112,6 +106,7 @@ export function createBridge(
                 ? { providerID: model.providerId, modelID: model.modelId }
                 : undefined,
               agent,
+              baseUrl: clientRef.baseUrl,
               directory: sessions.getProjectDirectory(),
             })
           },
@@ -162,20 +157,15 @@ async function maybeHandlePendingSelection(
   commandContext: CommandContext,
 ): Promise<string | null> {
   const pending = commandContext.pendingSelections.get(ctx.userId)
-  if (!pending) {
-    return null
-  }
-
+  if (!pending) return null
   if (pending.expiresAt <= Date.now()) {
     commandContext.pendingSelections.delete(ctx.userId)
     return null
   }
-
   if (!/^\d+$/.test(ctx.content.trim())) {
     commandContext.pendingSelections.delete(ctx.userId)
     return null
   }
-
   return handlePendingSelection(ctx.userId, Number(ctx.content.trim()), commandContext)
 }
 
@@ -210,6 +200,8 @@ function waitForSessionReply(
 
     router.unregister(sessionId)
     router.register(sessionId, (event: Event) => {
+      console.log(`[bridge] SSE for ${sessionId.slice(0, 12)}... type=${event.type}`)
+
       if (event.type === "message.part.updated") {
         const part = event.properties.part
         if (part.type === "text") {

@@ -52,10 +52,10 @@ async function main(): Promise<void> {
 
   startBackgroundTokenRefresh(config.qq.appId, config.qq.clientSecret)
 
-  const router = new EventRouter(proxyClient)
+  const initialProjectDir = config.opencode.projectDirectory || undefined
+  const router = new EventRouter(proxyClient, initialProjectDir)
   await router.start()
 
-  const initialProjectDir = config.opencode.projectDirectory || undefined
   const sessions = new SessionManager(proxyClient, initialProjectDir)
 
   const reconnect: ReconnectFn = async (newBaseUrl: string): Promise<void> => {
@@ -86,6 +86,7 @@ async function main(): Promise<void> {
 
   const setProjectDirectory: SetProjectDirectoryFn = (directory: string | undefined) => {
     sessions.setProjectDirectory(directory)
+    router.setDirectory(directory)
     try {
       persistEnvKV("OPENCODE_PROJECT_DIRECTORY", directory ?? "")
     } catch (err) {

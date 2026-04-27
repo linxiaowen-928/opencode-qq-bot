@@ -24,6 +24,7 @@ export interface PromptParams {
   sessionId: string
   text: string
   directory?: string
+  baseUrl: string
   model?: { providerID: string; modelID: string }
   agent?: string
 }
@@ -102,18 +103,29 @@ export async function updateSessionTitle(client: OpencodeClient, sessionId: stri
 }
 
 // ---- prompt ----
+// NOTE: 使用 fetch 直连而非 SDK 的 promptAsync，因为 SDK v1 的 SessionPromptAsyncData
+// 类型不支持 query.directory，会导致 prompt 发到错误的 project 中。
 
-export async function promptAsync(client: OpencodeClient, params: PromptParams): Promise<void> {
-  console.log(`[adapter] promptAsync sessionId=${params.sessionId.slice(0,12)}... dir=${params.directory || '(none)'}`)
-  await client.session.promptAsync({
-    path: { id: params.sessionId },
-    ...dirQuery(params.directory),
-    body: {
-      parts: [{ type: "text", text: params.text }],
-      ...(params.model ? { model: params.model } : {}),
-      ...(params.agent ? { agent: params.agent } : {}),
-    },
+export async function promptAsync(_client: OpencodeClient, params: PromptParams): Promise<void> {
+  const url = `${params.baseUrl.replace(/\/+$/, "")}/session/${params.sessionId}/prompt_async`
+  const urlWithDir = params.directory
+    ? `${url}?directory=${encodeURIComponent(params.directory)}`
+    : url
+  console.log(`[adapter] promptAsync url=${urlWithDir}`)
+  const body: Record<string, unknown> = {
+    parts: [{ type: "text", text: params.text }],
+  }
+  if (params.model) body.model = params.model
+  if (params.agent) body.agent = params.agent
+  const res = await fetch(urlWithDir, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   })
+  if (!res.ok) {
+    const text = await res.text().catch(() => "")
+    throw new Error(`promptAsync failed (${res.status}): ${text.slice(0, 200)}`)
+  }
 }
 
 // ---- models ----
