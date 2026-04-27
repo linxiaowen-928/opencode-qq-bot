@@ -79,52 +79,44 @@ export async function handleStatus(ctx: MessageContext, cmdCtx: CommandContext):
 }
 
 export async function handleSessions(ctx: MessageContext, cmdCtx: CommandContext): Promise<string> {
-  // 从 OpenCode 服务端拉取完整 session 列表（跨 project）
-  let allSessions: Array<{ id: string; title: string; directory: string; projectWorktree: string; updatedAt: number }> = []
+  const projectDir = cmdCtx.sessions.getProjectDirectory()
+  if (!projectDir) {
+    return "当前未设置 project，请先发送 pl 选择 project"
+  }
+
+  // 只拉当前 project 的 session
+  let sessions: Array<{ id: string; title: string; updatedAt: number }> = []
   try {
-    allSessions = await listAllSessions(cmdCtx.clientRef.baseUrl)
-    allSessions.sort((a, b) => b.updatedAt - a.updatedAt)
+    const all = await listAllSessions(cmdCtx.clientRef.baseUrl)
+    sessions = all
+      .filter((s) => s.projectWorktree === projectDir || s.directory === projectDir)
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .map((s) => ({ id: s.id, title: s.title, updatedAt: s.updatedAt }))
   } catch {
-    // 降级：无列表时展示空
+    // 降级
   }
 
-  if (allSessions.length === 0) {
-    return "当前没有可切换的会话（服务端和本地均无记录）"
-  }
-
-  // 按 projectWorktree 分组
-  const groups = new Map<string, typeof allSessions>()
-  for (const s of allSessions) {
-    const key = s.projectWorktree || "未知 project"
-    const list = groups.get(key) ?? []
-    list.push(s)
-    groups.set(key, list)
+  if (sessions.length === 0) {
+    return "当前 project 没有可切换的会话"
   }
 
   const currentSessionId = cmdCtx.sessions.getSession(ctx.userId)?.sessionId
   cmdCtx.pendingSelections.set(ctx.userId, {
     type: "session",
-    items: allSessions.map((s) => ({
-      id: s.id,
-      label: s.title,
-      directory: s.directory,
-    })),
+    items: sessions.map((s) => ({ id: s.id, label: s.title })),
     expiresAt: Date.now() + SELECTION_TTL_MS,
   })
 
-  const lines: string[] = [`会话列表（共 ${allSessions.length} 个）：`]
-  let idx = 1
-  for (const [worktree, sessions] of groups) {
-    const label = worktree === "/" ? "全局" : worktree.split("/").pop() || worktree
-    lines.push(`\n[${label}] (${sessions.length} sessions)`)
-    for (const s of sessions) {
-      const prefix = s.id === currentSessionId ? "[当前] " : ""
-      lines.push(`${idx}. ${prefix}${s.title}  ${formatRelativeTime(s.updatedAt)}`)
-      idx++
-    }
-  }
-  lines.push("回复序号切换会话（60 秒内有效）")
-  return lines.join("\n")
+  const lines = sessions.map((s, index) => {
+    const prefix = s.id === currentSessionId ? "[当前] " : ""
+    return `${index + 1}. ${prefix}${s.title}  ${formatRelativeTime(s.updatedAt)}`
+  })
+
+  return [
+    `会话列表（${projectDir.split("/").pop() || projectDir}，共 ${sessions.length} 个）：`,
+    ...lines,
+    "回复序号切换会话（60 秒内有效）",
+  ].join("\n")
 }
 
 export async function handleModel(ctx: MessageContext, args: string, cmdCtx: CommandContext): Promise<string> {

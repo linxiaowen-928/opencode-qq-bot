@@ -39,7 +39,8 @@ export function createBridge(
   reconnect: ReconnectFn,
   setProjectDirectory: SetProjectDirectoryFn,
 ): Bridge {
-  const busyUsers = new Set<string>()
+  // 消息队列：userId → [未发送的消息内容列表]
+  const messageQueue = new Map<string, string[]>()
   const greeted = new Set<string>()
   const pendingSelections = new Map<string, PendingSelection>()
   const commandContext: CommandContext = {
@@ -52,6 +53,49 @@ export function createBridge(
     pendingSelections,
     reconnect,
     setProjectDirectory,
+  }
+
+  // 核心：处理一条 prompt（包括队列排空）
+  async function processPrompt(userId: string, content: string, ctx: MessageContext): Promise<void> {
+    const session = await sessions.getOrCreate(userId)
+    const model = sessions.getModel(userId)
+    const agent = sessions.getAgent(userId)
+    let repliedProcessing = false
+
+    await waitForSessionReply(
+      router,
+      session.sessionId,
+      () => {
+        void promptAsync(client, {
+          sessionId: session.sessionId,
+          text: content,
+          model: model.providerId && model.modelId
+            ? { providerID: model.providerId, modelID: model.modelId }
+            : undefined,
+          agent,
+          baseUrl: clientRef.baseUrl,
+          directory: sessions.getProjectDirectory(),
+        })
+      },
+      {
+        onFirstChunk: async () => {
+          if (!repliedProcessing) {
+            repliedProcessing = true
+            await sendReply(ctx, "AI 正在处理中...")
+          }
+        },
+        onProgress: async (text) => {
+          const prefix = "[AI 输出中] "
+          const preview = text.length > 500 ? text.slice(0, 500) + "..." : text
+          await sendReply(ctx, prefix + preview)
+        },
+        onDone: async (text) => {
+          if (text.trim()) {
+            await sendReply(ctx, text)
+          }
+        },
+      },
+    )
   }
 
   const handleMessage = async (ctx: MessageContext): Promise<void> => {
@@ -81,58 +125,33 @@ export function createBridge(
         return
       }
 
-      if (busyUsers.has(ctx.userId)) {
-        await sendReply(ctx, "上一条消息还在处理中，请稍候再试")
+      // 消息队列：如果该用户有正在处理的消息，入队等待
+      if (messageQueue.has(ctx.userId)) {
+        messageQueue.get(ctx.userId)!.push(content)
+        console.log(`[bridge] queued message for userId=${ctx.userId.slice(0, 8)}... queue length=${messageQueue.get(ctx.userId)!.length}`)
         return
       }
 
-      busyUsers.add(ctx.userId)
+      // 新消息：标记为处理中
+      messageQueue.set(ctx.userId, [])
 
       try {
-        const session = await sessions.getOrCreate(ctx.userId)
-        const model = sessions.getModel(ctx.userId)
-        const agent = sessions.getAgent(ctx.userId)
-
-        let repliedProcessing = false
-
-        await waitForSessionReply(
-          router,
-          session.sessionId,
-          () => {
-            void promptAsync(client, {
-              sessionId: session.sessionId,
-              text: content,
-              model: model.providerId && model.modelId
-                ? { providerID: model.providerId, modelID: model.modelId }
-                : undefined,
-              agent,
-              baseUrl: clientRef.baseUrl,
-              directory: sessions.getProjectDirectory(),
-            })
-          },
-          {
-            onFirstChunk: async () => {
-              if (!repliedProcessing) {
-                repliedProcessing = true
-                await sendReply(ctx, "AI 正在处理中...")
-              }
-            },
-            onProgress: async (text) => {
-              const prefix = "[AI 输出中] "
-              const preview = text.length > 500 ? text.slice(0, 500) + "..." : text
-              await sendReply(ctx, prefix + preview)
-            },
-            onDone: async (text) => {
-              if (text.trim()) {
-                await sendReply(ctx, text)
-              }
-            },
-          },
-        )
+        await processPrompt(ctx.userId, content, ctx)
       } catch (error) {
         await sendReply(ctx, `处理失败：${toErrorMessage(error)}`)
       } finally {
-        busyUsers.delete(ctx.userId)
+        // 排空队列：合并所有等待的消息为一条 prompt
+        const queue = messageQueue.get(ctx.userId) ?? []
+        messageQueue.delete(ctx.userId)
+        if (queue.length > 0) {
+          const combined = queue.join("\n---\n")
+          console.log(`[bridge] draining queue for userId=${ctx.userId.slice(0, 8)}... combined ${queue.length} messages`)
+          try {
+            await processPrompt(ctx.userId, combined, ctx)
+          } catch (error) {
+            await sendReply(ctx, `处理失败：${toErrorMessage(error)}`)
+          }
+        }
       }
     } catch (error) {
       console.error("[bridge] handleMessage failed:", error)
@@ -200,8 +219,6 @@ function waitForSessionReply(
 
     router.unregister(sessionId)
     router.register(sessionId, (event: Event) => {
-      console.log(`[bridge] SSE for ${sessionId.slice(0, 12)}... type=${event.type}`)
-
       if (event.type === "message.part.updated") {
         const part = event.properties.part
         if (part.type === "text") {

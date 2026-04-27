@@ -4,7 +4,7 @@ export function buildHelpText(): string {
     "nw | /new - 创建新会话",
     "st | /stop - 停止当前 AI 运行",
     "ss | /status - 查看状态（含当前 opencode 地址）",
-    "sn | /sessions - 历史会话，回复序号切换",
+    "sn | /sessions - 当前 project 的会话列表，回复序号切换",
     "hp | /help - 查看帮助",
     "md | /model - 列出/切换模型",
     "ag | /agent - 列出/切换 Agent",
