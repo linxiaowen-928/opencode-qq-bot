@@ -28,11 +28,15 @@
 ## 功能特性
 
 - **QQ 群聊 + 私聊** - @机器人 或直接私信，两种方式都支持
-- **内嵌 OpenCode** - 自动启动 opencode serve，无需手动管理进程
+- **历史会话接入** - `sn` 列出所有项目的历史 session，回复序号切换，自动切换到对应 project directory
+- **跨项目可见** - 列表按 project 分组展示，附带相对时间
+- **外部 OpenCode 热切换** - `/connect <url>` 运行时切换 opencode 实例，无需重启
+- **Project 管理** - `pl` 列出 project 及 session 计数，支持切换
 - **会话管理** - 每用户独立会话，支持新建、切换、重命名
-- **模型切换** - 随时切换 AI 模型和 Agent 模式
+- **流式推送** - AI 输出实时分段推送到 QQ，1 分钟间隔进度提示
+- **模型/Agent 切换** - 随时切换 AI 模型和 Agent 模式
 - **交互引导** - 首次运行自动引导配置，零门槛启动
-- **命令系统** - 10 个内置命令覆盖常用操作
+- **背景启动脚本** - 提供 start-bg.sh / stop.sh 和 systemd 服务模板
 
 ---
 
@@ -40,7 +44,7 @@
 
 ### 前置条件
 
-- [Bun](https://bun.sh) >= 1.0
+- [Bun](https://bun.sh) >= 1.0 或 Node >= 18
 - [OpenCode](https://opencode.ai) 已安装
 - QQ 机器人的 AppID 和 AppSecret（下文有获取教程）
 
@@ -79,32 +83,40 @@ QQ App Secret: ********
 
 ```bash
 # 方式 1: 环境变量
-OPENCODE_BASE_URL=http://localhost:4096 openqq
+OPENCODE_BASE_URL=http://127.0.0.1:4096 openqq
 
 # 方式 2: 写入 ~/.openqq/.env
-echo "OPENCODE_BASE_URL=http://localhost:4096" >> ~/.openqq/.env
+echo "OPENCODE_BASE_URL=http://127.0.0.1:4096" >> ~/.openqq/.env
+```
+
+### 运行时热切换
+
+Bot 运行后也可以在 QQ 里运行时切换：
+
+```
+cn http://127.0.0.1:4096     # 切换到另一台机器的 opencode
 ```
 
 ---
 
 ## 命令列表
 
-在 QQ 对话中发送以下命令：
+发送短别名或 `/全称` 执行命令：
 
-| 命令 | 功能 |
-|------|------|
-| `/new` | 创建新会话 |
-| `/stop` | 停止当前 AI 运行 |
-| `/status` | 查看服务器和当前会话状态 |
-| `/sessions` | 列出历史会话，回复序号切换 |
-| `/help` | 查看帮助 |
-| `/model` | 列出可用模型，回复序号切换 |
-| `/model <provider/model>` | 直接切换到指定模型 |
-| `/agent` | 列出可用 Agent |
-| `/agent <name>` | 切换 Agent（如 code / ask） |
-| `/rename <name>` | 重命名当前会话 |
+| 命令 | 别名 | 功能 |
+|------|------|------|
+| `/new` | `nw` | 创建新会话 |
+| `/stop` | `st` | 停止当前 AI 运行 |
+| `/status` | `ss` | 查看服务器、连接地址、session 总数、当前 project |
+| `/sessions` | `sn` | 跨 project 列出所有历史会话，回复序号切换 |
+| `/connect <url>` | `cn` | 热切换到另一台 opencode 实例 |
+| `/projects` | `pl` | 列出所有 project 及 session 计数 |
+| `/model` | `md` | 列出可用模型，回复序号切换 |
+| `/agent` | `ag` | 列出可用 Agent |
+| `/rename <name>` | `rn` | 重命名当前会话 |
+| `/help` | `hp` | 查看帮助 |
 
-首次 @机器人 或私聊时，Bot 会自动发送命令帮助。
+> **提示**：`sn` 选择会话时，如果该 session 属于不同 project，会自动切换 project directory。
 
 ---
 
@@ -113,8 +125,6 @@ echo "OPENCODE_BASE_URL=http://localhost:4096" >> ~/.openqq/.env
 ### 1. 注册 QQ 开放平台
 
 前往 [QQ 开放平台](https://q.qq.com/qqbot/openclaw/) 注册账号。
-
-
 
 ### 2. 创建机器人
 
@@ -156,8 +166,41 @@ echo "OPENCODE_BASE_URL=http://localhost:4096" >> ~/.openqq/.env
 | `QQ_APP_SECRET` | 是 | - | QQ 机器人 AppSecret |
 | `QQ_SANDBOX` | 否 | `false` | 是否使用沙箱环境 |
 | `OPENCODE_BASE_URL` | 否 | (自动启动) | 外部 opencode serve 地址 |
+| `OPENCODE_PROJECT_DIRECTORY` | 否 | - | 默认 project 目录，`sn` 切换 session 时自动更新 |
 | `ALLOWED_USERS` | 否 | (不限制) | 允许使用的 QQ 用户 ID，逗号分隔 |
 | `MAX_REPLY_LENGTH` | 否 | `3000` | 单条回复最大字符数 |
+
+---
+
+## 后台启动
+
+### 使用启动脚本
+
+```bash
+# 启动（日志输出到 logs/bot-YYYYMMDD.log）
+bash scripts/start-bg.sh
+
+# 查看日志
+tail -f logs/bot-*.log
+
+# 停止
+bash scripts/stop.sh
+```
+
+### 使用 systemd（开机自启）
+
+```bash
+# 复制服务文件
+sudo cp scripts/opencode-serve.service /etc/systemd/system/
+sudo cp scripts/opencode-qq-bot.service /etc/systemd/system/
+
+# 启动并设置开机自启
+sudo systemctl enable --now opencode-serve
+sudo systemctl enable --now opencode-qq-bot
+
+# 查看状态
+sudo systemctl status opencode-qq-bot
+```
 
 ---
 
@@ -165,22 +208,35 @@ echo "OPENCODE_BASE_URL=http://localhost:4096" >> ~/.openqq/.env
 
 ```
 opencode_qq_bot/
-├── bin/openqq.js          # CLI 入口
+├── bin/openqq.js              # CLI 入口
+├── scripts/
+│   ├── start-bg.sh            # 后台启动脚本
+│   ├── stop.sh                # 停止脚本
+│   ├── opencode-serve.service # systemd 服务（opencode 后端）
+│   └── opencode-qq-bot.service# systemd 服务（QQ bot）
 ├── src/
-│   ├── index.ts           # 启动编排 + 优雅关闭
-│   ├── config.ts          # 配置加载 + 交互引导
-│   ├── bridge.ts          # 核心桥接: QQ <-> OpenCode
-│   ├── commands.ts        # 命令系统
+│   ├── index.ts               # 启动编排 + 优雅关闭 + /connect 热切换
+│   ├── config.ts              # 配置加载 + 交互引导
+│   ├── bridge.ts              # 核心桥接: QQ <-> OpenCode + 流式推送
+│   ├── commands/
+│   │   ├── handlers.ts        # 所有命令处理器
+│   │   ├── router.ts          # 命令解析 + 路由 + 序号选择
+│   │   ├── types.ts           # 命令类型定义
+│   │   ├── help.ts            # 帮助文本
+│   │   └── index.ts           # 导出
 │   ├── qq/
-│   │   ├── api.ts         # QQ REST API 封装
-│   │   ├── gateway.ts     # WebSocket 状态机
-│   │   ├── sender.ts      # 消息格式化 + 发送
-│   │   └── types.ts       # QQ 类型定义
+│   │   ├── api.ts             # QQ REST API 封装
+│   │   ├── gateway.ts         # WebSocket 状态机
+│   │   ├── sender.ts          # 消息格式化 + 发送
+│   │   └── types.ts           # QQ 类型定义
 │   └── opencode/
-│       ├── client.ts      # OpenCode SDK 封装
-│       ├── events.ts      # SSE 事件路由
-│       └── sessions.ts    # 会话管理
-└── .env.example
+│       ├── client.ts          # OpenCode SDK 封装 + ClientRef/Proxy
+│       ├── adapter.ts         # Adapter 层: 目录感知 + 跨 project session
+│       ├── events.ts          # SSE 事件路由（支持 /connect 热重启）
+│       └── sessions.ts        # 会话管理 + project 切换
+├── dev_doc/                   # 开发文档
+├── .env.example
+└── package.json
 ```
 
 ---
@@ -201,19 +257,50 @@ QQ 用户 @机器人 发消息
        +---> 普通消息
                |
                v
-         OpenCode SDK
-         session.prompt()
+         SessionManager.getOrCreate(userId)
                |
                v
-         SSE 事件流收集回复
+         promptAsync(fetch + ?directory=)
                |
                v
-         session.idle ---> 回复 QQ 用户
+         opencode serve 异步处理
+               |
+               v
+         SSE 事件流 (带 project directory 过滤)
+               |
+               v
+         EventRouter 按 sessionId 分发
+               |
+               v
+         流式收集 → 分段推送 QQ
+               |
+               v
+         session.idle → 最终完整回复
 ```
 
-- 使用 Fire-and-Forget 模式：`prompt()` 不阻塞，通过 SSE 事件流异步收集回复
-- 全局一个 SSE 连接，EventRouter 按 sessionId 分发到各用户
-- AI 回复收集完毕后一次性发送，规避 QQ 被动回复速率限制
+- 使用 Fire-and-Forget 模式：`prompt_async` 不阻塞，通过 SSE 事件流异步收集回复
+- SSE 订阅带 `?directory=`，只接收目标 project 的事件
+- 收到第一个流式块时发送 "AI 正在处理中..."，之后每 1 分钟推送进度预览
+- AI 完整回复后一次性推送最终结果
+- `/connect` 使用 ClientRef 模式热切换，不中断服务
+
+---
+
+## 关键技术细节
+
+### 跨 project session 可见
+
+`sn` 命令调用 `/experimental/session` 端点拉取全部 project 的 session，按 `projectWorktree` 分组展示。选择某个 session 时自动切换到对应的 project directory。
+
+### Runtime 热切换
+
+ClientRef + Proxy 模式，`/connect <url>` 运行时：
+1. 创建新 client，做健康检查
+2. 替换 proxy 指向的目标
+3. 关闭嵌入式 server（如果存在）
+4. 清空 session 缓存
+5. 重启 SSE 订阅
+6. 持久化到 `~/.openqq/.env`
 
 ---
 
