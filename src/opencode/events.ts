@@ -16,7 +16,14 @@ export class EventRouter {
   }
 
   setDirectory(directory: string | undefined): void {
+    if (this.directory === directory) return
     this.directory = directory
+    console.log(`[events] directory changed to ${directory || "(global)"}, restarting SSE...`)
+    this.generation += 1
+    if (this.running) {
+      const myGen = this.generation
+      void this.consume(myGen)
+    }
   }
 
   async start(): Promise<void> {
