@@ -76,7 +76,7 @@ export function createBridge(
           text: content,
           model: model.providerId && model.modelId
             ? { providerID: model.providerId, modelID: model.modelId }
-            : undefined,
+            : { providerID: "deepseek", modelID: "deepseek-v4-flash" },
           agent,
           baseUrl: clientRef.baseUrl,
           directory: sessions.getProjectDirectory(),

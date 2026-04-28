@@ -9,3 +9,6 @@ logs/
 *.pid
 bun.lock
 package-lock.json
+
+# 本地 systemd 配置（含个人路径，不推送）
+scripts/*.service

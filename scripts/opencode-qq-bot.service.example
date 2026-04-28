@@ -1,0 +1,22 @@
+[Unit]
+Description=OpenCode QQ Bot - AI coding assistant via QQ
+After=network-online.target opencode-serve.service
+Wants=network-online.target opencode-serve.service
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+WorkingDirectory=/PATH/TO/opencode-qq-bot
+Environment="PATH=/home/YOUR_USERNAME/.bun/bin:/home/YOUR_USERNAME/.opencode/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="OPENCODE_BASE_URL=http://127.0.0.1:4096"
+EnvironmentFile=/home/YOUR_USERNAME/.openqq/.env
+ExecStart=/home/YOUR_USERNAME/.bun/bin/bun run /PATH/TO/opencode-qq-bot/src/index.ts
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/PATH/TO/opencode-qq-bot/logs/bot.log
+StandardError=append:/PATH/TO/opencode-qq-bot/logs/bot-error.log
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,17 @@
+[Unit]
+Description=OpenCode AI Serve - AI coding assistant backend
+After=network.target
+Before=opencode-qq-bot.service
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+Environment="PATH=/home/YOUR_USERNAME/.bun/bin:/home/YOUR_USERNAME/.opencode/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/home/YOUR_USERNAME/.opencode/bin/opencode serve --hostname 127.0.0.1 --port 4096
+Restart=always
+RestartSec=5
+StandardOutput=append:/PATH/TO/opencode-qq-bot/logs/opencode-serve.log
+StandardError=append:/PATH/TO/opencode-qq-bot/logs/opencode-serve-error.log
+
+[Install]
+WantedBy=multi-user.target
