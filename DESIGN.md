@@ -542,7 +542,7 @@ const pendingSelections: Map<string, PendingSelection> = new Map()
 
 ```env
 # QQ Bot
-QQ_APP_ID=102935014
+QQ_APP_ID=你的AppID
 QQ_APP_SECRET=你的AppSecret
 QQ_SANDBOX=false
 
