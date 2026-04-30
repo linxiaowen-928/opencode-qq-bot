@@ -209,7 +209,11 @@ function waitForSessionReply(
   callbacks: StreamCallbacks,
 ): Promise<void> {
   let settled = false
-  let latestText = ""
+  // 按出现顺序存储 text 类型 part（过滤 reasoning/tool/synthetic）
+  const textParts = new Map<string, string>()
+  function buildFullText(): string {
+    return Array.from(textParts.values()).join("\n\n")
+  }
   let lastSentLength = 0
   let lastSendTime = 0
   let hasReceivedChunk = false
@@ -235,14 +239,16 @@ function waitForSessionReply(
     router.register(sessionId, (event: Event) => {
       if (event.type === "message.part.updated") {
         const part = event.properties.part
-        if (part.type === "text" || part.type === "reasoning") {
-          latestText = part.text
+        // 只采集 text 类型，过滤 reasoning（思考）、tool（工具调用）、synthetic（内部消息）
+        if (part.type === "text" && !part.synthetic) {
+          textParts.set(part.id, part.text)
+          const fullText = buildFullText()
           if (!hasReceivedChunk) {
             hasReceivedChunk = true
             void callbacks.onFirstChunk()
             lastSendTime = Date.now()
             // 首次推送头部内容
-            const head = latestText.slice(0, MIN_DELTA)
+            const head = fullText.slice(0, MIN_DELTA)
             if (head) {
               lastSentLength = head.length
               void callbacks.onProgress(head)
@@ -252,10 +258,9 @@ function waitForSessionReply(
 
           // 后续：增量推送
           const now = Date.now()
-          const newDelta = latestText.length - lastSentLength
-          if (newDelta >= MIN_DELTA && now - lastSendTime >= MIN_INTERVAL) {
-            const delta = latestText.slice(lastSentLength)
-            lastSentLength = latestText.length
+          if (fullText.length - lastSentLength >= MIN_DELTA && now - lastSendTime >= MIN_INTERVAL) {
+            const delta = fullText.slice(lastSentLength)
+            lastSentLength = fullText.length
             lastSendTime = now
             void callbacks.onProgress(delta)
           }
@@ -265,9 +270,15 @@ function waitForSessionReply(
 
       if (event.type === "session.idle") {
         finish(() => {
-          const remaining = latestText.slice(lastSentLength)
-          const finalText = remaining || latestText || "(AI 未返回内容)"
-          void callbacks.onDone(finalText).then(() => resolve())
+          const fullText = buildFullText()
+          const remaining = fullText.slice(lastSentLength)
+          if (remaining.trim()) {
+            void callbacks.onDone(remaining).then(() => resolve())
+          } else if (fullText.trim()) {
+            resolve()
+          } else {
+            void callbacks.onDone("(AI 未返回文本内容)").then(() => resolve())
+          }
         })
         return
       }
