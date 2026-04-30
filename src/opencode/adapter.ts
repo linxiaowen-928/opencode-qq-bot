@@ -111,7 +111,7 @@ export async function promptAsync(_client: OpencodeClient, params: PromptParams)
   const urlWithDir = params.directory
     ? `${url}?directory=${encodeURIComponent(params.directory)}`
     : url
-  console.log(`[adapter] promptAsync url=${urlWithDir}`)
+  console.log(`[moss-adapter] promptAsync url=${urlWithDir}`)
   const body: Record<string, unknown> = {
     parts: [{ type: "text", text: params.text }],
   }

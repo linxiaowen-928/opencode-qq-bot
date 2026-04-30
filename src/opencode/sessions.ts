@@ -62,7 +62,7 @@ export class SessionManager {
       mkdirSync(join(homedir(), ".openqq"), { recursive: true })
       writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), "utf-8")
     } catch (err) {
-      console.warn(`[sessions] saveToDisk failed: ${err instanceof Error ? err.message : String(err)}`)
+      console.warn(`[moss-sessions] saveToDisk failed: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
 
@@ -90,9 +90,9 @@ export class SessionManager {
           this.bookmarkStacks.set(b.userId, b.stack)
         }
       }
-      console.log(`[sessions] loaded ${state.sessions.length} sessions, ${this.pendingPrompts.size} pending, ${state.bookmarks?.length ?? 0} bookmark stacks`)
+      console.log(`[moss-sessions] loaded ${state.sessions.length} sessions, ${this.pendingPrompts.size} pending, ${state.bookmarks?.length ?? 0} bookmark stacks`)
     } catch (err) {
-      console.warn(`[sessions] loadFromDisk failed: ${err instanceof Error ? err.message : String(err)}`)
+      console.warn(`[moss-sessions] loadFromDisk failed: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
 
@@ -106,10 +106,10 @@ export class SessionManager {
   async getOrCreate(userId: string): Promise<UserSession> {
     const existing = this.sessions.get(userId)
     if (existing) {
-      console.log(`[sessions] getOrCreate REUSE userId=${userId.slice(0, 8)}... sessionId=${existing.sessionId.slice(0, 12)}... dir=${this.projectDirectory || "(default)"}`)
+      console.log(`[moss-sessions] getOrCreate REUSE userId=${userId.slice(0, 8)}... sessionId=${existing.sessionId.slice(0, 12)}... dir=${this.projectDirectory || "(default)"}`)
       return existing
     }
-    console.log(`[sessions] getOrCreate NEW userId=${userId.slice(0, 8)}... dir=${this.projectDirectory || "(default)"}`)
+    console.log(`[moss-sessions] getOrCreate NEW userId=${userId.slice(0, 8)}... dir=${this.projectDirectory || "(default)"}`)
     const created = await createSession(this.client, this.projectDirectory)
     const session: UserSession = { sessionId: created.id, title: created.title }
     this.sessions.set(userId, session)
@@ -133,7 +133,7 @@ export class SessionManager {
 
   switchSession(userId: string, sessionId: string, title?: string): void {
     const prev = this.sessions.get(userId)
-    console.log(`[sessions] switchSession userId=${userId.slice(0, 8)}... from=${prev?.sessionId?.slice(0, 12) || "none"} to=${sessionId.slice(0, 12)}... dir=${this.projectDirectory || "(default)"}`)
+    console.log(`[moss-sessions] switchSession userId=${userId.slice(0, 8)}... from=${prev?.sessionId?.slice(0, 12) || "none"} to=${sessionId.slice(0, 12)}... dir=${this.projectDirectory || "(default)"}`)
     this.sessions.set(userId, {
       ...prev,
       sessionId,

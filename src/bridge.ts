@@ -44,7 +44,7 @@ export function createBridge(
   const greeted = new Set<string>()
   // 本次启动前有未完成 prompt 的用户，需在第一条消息时通知
   const pendingOnStartup = new Set(sessions.getPendingPromptsOnStartup())
-  console.log(`[bridge] ${pendingOnStartup.size} users had pending prompts on startup`)
+  console.log(`[moss-bridge] ${pendingOnStartup.size} users had pending prompts on startup`)
   const pendingSelections = new Map<string, PendingSelection>()
   const lastReplies = new Map<string, string>()
   const commandContext: CommandContext = {
@@ -91,6 +91,7 @@ export function createBridge(
         },
         onProgress: async (text) => {
           await sendReply(ctx, text)
+          await sendReply(ctx, text)
           const prefix = "[AI 输出中] "
           const preview = text.length > 500 ? text.slice(0, 500) + "..." : text
           await sendReply(ctx, prefix + preview)
@@ -135,7 +136,7 @@ export function createBridge(
       // 消息队列：如果该用户有正在处理的消息，入队等待
       if (messageQueue.has(ctx.userId)) {
         messageQueue.get(ctx.userId)!.push(content)
-        console.log(`[bridge] queued message for userId=${ctx.userId.slice(0, 8)}... queue length=${messageQueue.get(ctx.userId)!.length}`)
+        console.log(`[moss-bridge] queued message for userId=${ctx.userId.slice(0, 8)}... queue length=${messageQueue.get(ctx.userId)!.length}`)
         return
       }
 
@@ -154,7 +155,7 @@ export function createBridge(
         sessions.clearPendingPrompt(ctx.userId)
         if (queue.length > 0) {
           const combined = queue.join("\n---\n")
-          console.log(`[bridge] draining queue for userId=${ctx.userId.slice(0, 8)}... combined ${queue.length} messages`)
+          console.log(`[moss-bridge] draining queue for userId=${ctx.userId.slice(0, 8)}... combined ${queue.length} messages`)
           try {
             sessions.savePendingPrompt(ctx.userId)
             await processPrompt(ctx.userId, combined, ctx)
@@ -164,11 +165,11 @@ export function createBridge(
         }
       }
     } catch (error) {
-      console.error("[bridge] handleMessage failed:", error)
+      console.error("[moss-bridge] handleMessage failed:", error)
       try {
         await sendReply(ctx, `处理消息失败：${toErrorMessage(error)}`)
       } catch (replyError) {
-        console.error("[bridge] failed to send error reply:", replyError)
+        console.error("[moss-bridge] failed to send error reply:", replyError)
       }
     }
   }
@@ -209,11 +210,14 @@ function waitForSessionReply(
   callbacks: StreamCallbacks,
 ): Promise<void> {
   let settled = false
-  let latestText = ""
+  // 按出现顺序存储 text 类型 part（过滤 reasoning/tool/synthetic）
+  const textParts = new Map<string, string>()
+  function buildFullText(): string {
+    return Array.from(textParts.values()).join("\n\n")
+  }
   let lastSentLength = 0
   let lastSendTime = 0
   let hasReceivedChunk = false
-
   // 增量推送：有足够新内容且距上次发送超过 30 秒时推送
   const MIN_DELTA = 200
   const MIN_INTERVAL = 30_000
@@ -235,14 +239,16 @@ function waitForSessionReply(
     router.register(sessionId, (event: Event) => {
       if (event.type === "message.part.updated") {
         const part = event.properties.part
-        if (part.type === "text" || part.type === "reasoning") {
-          latestText = part.text
+        // 只采集 text 类型，过滤 reasoning（思考）、tool（工具调用）、synthetic（内部消息）
+        if (part.type === "text" && !part.synthetic) {
+          textParts.set(part.id, part.text)
+          const fullText = buildFullText()
           if (!hasReceivedChunk) {
             hasReceivedChunk = true
             void callbacks.onFirstChunk()
             lastSendTime = Date.now()
             // 首次推送头部内容
-            const head = latestText.slice(0, MIN_DELTA)
+            const head = fullText.slice(0, MIN_DELTA)
             if (head) {
               lastSentLength = head.length
               void callbacks.onProgress(head)
@@ -252,10 +258,9 @@ function waitForSessionReply(
 
           // 后续：增量推送
           const now = Date.now()
-          const newDelta = latestText.length - lastSentLength
-          if (newDelta >= MIN_DELTA && now - lastSendTime >= MIN_INTERVAL) {
-            const delta = latestText.slice(lastSentLength)
-            lastSentLength = latestText.length
+          if (fullText.length - lastSentLength >= MIN_DELTA && now - lastSendTime >= MIN_INTERVAL) {
+            const delta = fullText.slice(lastSentLength)
+            lastSentLength = fullText.length
             lastSendTime = now
             void callbacks.onProgress(delta)
           }
@@ -265,9 +270,16 @@ function waitForSessionReply(
 
       if (event.type === "session.idle") {
         finish(() => {
-          const remaining = latestText.slice(lastSentLength)
-          const finalText = remaining || latestText || "(AI 未返回内容)"
-          void callbacks.onDone(finalText).then(() => resolve())
+          const fullText = buildFullText()
+          const remaining = fullText.slice(lastSentLength)
+          if (remaining.trim()) {
+            void callbacks.onDone(remaining).then(() => resolve())
+          } else if (fullText.trim()) {
+            resolve()
+          } else {
+            // 最终也没有 text 内容（可能是纯工具调用），发个兜底
+            void callbacks.onDone("(AI 未返回文本内容)").then(() => resolve())
+          }
         })
         return
       }

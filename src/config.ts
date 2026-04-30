@@ -1,4 +1,4 @@
-// @input:  process.env, ~/.openqq/.env
+// @input:  process.env, ~/.mossqq/.env
 // @output: Config, loadConfig, ensureConfig
 // @pos:    根层 - 环境变量加载 + 首次运行交互式引导
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs"
@@ -21,7 +21,7 @@ export interface Config {
   maxReplyLength: number
 }
 
-const CONFIG_DIR = join(homedir(), ".openqq")
+const CONFIG_DIR = join(homedir(), ".mossqq")
 const ENV_FILE = join(CONFIG_DIR, ".env")
 
 function askTwo(q1: string, q2: string): Promise<[string, string]> {
@@ -86,7 +86,7 @@ export async function ensureConfig(): Promise<void> {
     `QQ_APP_ID=${appId}`,
     `QQ_APP_SECRET=${appSecret}`,
     `QQ_SANDBOX=false`,
-    baseUrl ? `OPENCODE_BASE_URL=${baseUrl}` : `# OPENCODE_BASE_URL=http://127.0.0.1:4096`,
+    baseUrl ? `OPENCODE_BASE_URL=${baseUrl}` : `# OPENCODE_BASE_URL=http://127.0.0.1:8192`,
     `ALLOWED_USERS=`,
     `MAX_REPLY_LENGTH=3000`,
   ].join("\n") + "\n"

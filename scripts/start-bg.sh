@@ -1,8 +1,8 @@
 #!/bin/bash
 # ============================================================
-# OpenCode QQ Bot — 后台启动脚本
+# Moss QQ Bot — 后台启动脚本
 # 用法: bash scripts/start-bg.sh
-# 日志: logs/opencode-qq-bot.log (自动轮转，保留最近10个)
+# 日志: logs/moss-qq-bot.log (自动轮转，保留最近10个)
 # ============================================================
 set -euo pipefail
 

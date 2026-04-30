@@ -1,4 +1,3 @@
-import type { OpencodeClient } from "./client.js"
 import type { Event } from "@opencode-ai/sdk"
 
 export type EventCallback = (event: Event) => void
@@ -8,21 +7,19 @@ export class EventRouter {
   private running = false
   private generation = 0
   private directory: string | undefined
-  private client: OpencodeClient
+  private baseUrl: string
 
-  constructor(client: OpencodeClient, directory?: string) {
-    this.client = client
+  constructor(baseUrl: string, directory?: string) {
+    this.baseUrl = baseUrl.replace(/\/+$/, "")
     this.directory = directory
   }
 
   setDirectory(directory: string | undefined): void {
     if (this.directory === directory) return
     this.directory = directory
-    console.log(`[events] directory changed to ${directory || "(global)"}, restarting SSE...`)
     this.generation += 1
     if (this.running) {
-      const myGen = this.generation
-      void this.consume(myGen)
+      void this.consume(this.generation)
     }
   }
 
@@ -30,8 +27,7 @@ export class EventRouter {
     if (this.running) return
     this.running = true
     this.generation += 1
-    const myGen = this.generation
-    void this.consume(myGen)
+    void this.consume(this.generation)
   }
 
   stop(): void {
@@ -42,8 +38,7 @@ export class EventRouter {
   async restart(): Promise<void> {
     this.generation += 1
     this.running = true
-    const myGen = this.generation
-    void this.consume(myGen)
+    void this.consume(this.generation)
   }
 
   register(sessionId: string, callback: EventCallback): void {
@@ -54,54 +49,70 @@ export class EventRouter {
     this.listeners.delete(sessionId)
   }
 
+  private processLine(line: string): void {
+    if (!line.startsWith("data:")) return
+    const json = line.slice(5).trim()
+    if (!json) return
+    try {
+      const ev = JSON.parse(json)
+      if (ev.type === "server.connected" || ev.type === "server.heartbeat") return
+      console.log(`[moss-events] GOT: ${ev.type}`)
+      const sid = this.extractSessionId(ev)
+      if (sid) this.listeners.get(sid)?.(ev)
+    } catch {}
+  }
+
   private async consume(myGen: number): Promise<void> {
-    console.log(`[events] consume started, gen=${myGen} dir=${this.directory || "(global)"}`)
+    console.log(`[moss-events] started gen=${myGen}`)
     while (this.running && myGen === this.generation) {
       try {
-        const opts: Record<string, unknown> = {}
-        if (this.directory) opts.query = { directory: this.directory }
-        console.log(`[events] subscribing with opts=${JSON.stringify(opts)}`)
-        const result = await this.client.event.subscribe(opts)
-        console.log(`[events] SSE connected, gen=${myGen}`)
+        const url = this.directory
+          ? `${this.baseUrl}/event?directory=${encodeURIComponent(this.directory)}`
+          : `${this.baseUrl}/event`
 
-        for await (const event of result.stream) {
-          console.log(`[events] GOT: type=${event.type}`)
-          if (!this.running || myGen !== this.generation) break
-          const sessionId = this.extractSessionId(event)
-          if (sessionId) {
-            const cb = this.listeners.get(sessionId)
-            if (cb) cb(event)
-          }
+        const cp = await import("child_process")
+        const { createInterface } = await import("readline")
+
+        const child = cp.spawn("curl", ["-sN", url], { stdio: ["ignore", "pipe", "pipe"] })
+        console.log(`[moss-events] curl pid=${child.pid}`)
+
+        const rl = createInterface({ input: child.stdout! })
+        let settled = false
+        const kill = () => { if (!settled) { settled = true; try { child.kill() } catch {} } }
+
+        rl.on("line", (line) => {
+          if (!this.running || myGen !== this.generation) { kill(); return }
+          this.processLine(line)
+        })
+
+        child.on("exit", (code) => { if (!settled) { console.log(`[moss-events] curl exit ${code}`); settled = true } })
+        child.stderr!.resume()
+
+        // Wait while curl is alive
+        while (this.running && myGen === this.generation && !settled) {
+          await new Promise(r => setTimeout(r, 500))
         }
+        kill()
         this.resetBackoff()
       } catch (err) {
         if (!this.running || myGen !== this.generation) break
-        const msg = err instanceof Error ? err.message : String(err)
-        console.error(`[events] SSE error (gen=${myGen}): ${msg}`)
         await this.backoff()
       }
     }
-    console.log(`[events] consume loop exited (gen=${myGen})`)
+    console.log(`[moss-events] exit gen=${myGen}`)
   }
 
   private extractSessionId(event: Event): string | undefined {
     switch (event.type) {
-      case "message.part.updated":
-        return event.properties.part.sessionID
-      case "message.updated":
-        return event.properties.info.sessionID
-      case "session.idle":
-        return event.properties.sessionID
-      case "session.error":
-        return event.properties.sessionID ?? undefined
-      default:
-        return undefined
+      case "message.part.updated": return event.properties.part.sessionID
+      case "message.updated":     return event.properties.info.sessionID
+      case "session.idle":        return event.properties.sessionID
+      case "session.error":       return event.properties.sessionID ?? undefined
+      default:                    return undefined
     }
   }
 
   private reconnectDelay = 1000
-  private backoff(): Promise<void> {
-    return new Promise((r) => setTimeout(r, this.reconnectDelay))
-  }
+  private backoff(): Promise<void> { return new Promise((r) => setTimeout(r, this.reconnectDelay)) }
   resetBackoff(): void { this.reconnectDelay = 1000 }
 }

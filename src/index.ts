@@ -14,7 +14,7 @@ import { startBackgroundTokenRefresh, stopBackgroundTokenRefresh } from "./qq/to
 import { createBridge } from "./bridge.js"
 import type { ReconnectFn, SetProjectDirectoryFn } from "./commands/index.js"
 
-const CONFIG_DIR = join(homedir(), ".openqq")
+const CONFIG_DIR = join(homedir(), ".mossqq")
 const ENV_FILE = join(CONFIG_DIR, ".env")
 
 async function main(): Promise<void> {
@@ -43,7 +43,7 @@ async function main(): Promise<void> {
     const msg = err instanceof Error ? err.message : String(err)
     if (config.opencode.externalUrl) {
       console.error(`[index] 无法连接外部 opencode (${config.opencode.baseUrl})：${msg}`)
-      console.error(`[index] 请检查：1) opencode serve 是否在该地址运行；2) 若跨机器请检查隧道/防火墙；3) opencode 默认绑定 127.0.0.1，远程访问需 --hostname 0.0.0.0 或走 SSH 隧道`)
+      console.error(`[index] 请检查：1) Moss serve 是否在该地址运行；2) 若跨机器请检查隧道/防火墙；3) opencode 默认绑定 127.0.0.1，远程访问需 --hostname 0.0.0.0 或走 SSH 隧道`)
     } else {
       console.error(`[index] 嵌入式 opencode 健康检查失败：${msg}`)
     }
@@ -53,7 +53,7 @@ async function main(): Promise<void> {
   startBackgroundTokenRefresh(config.qq.appId, config.qq.clientSecret)
 
   const initialProjectDir = config.opencode.projectDirectory || undefined
-  const router = new EventRouter(proxyClient, initialProjectDir)
+  const router = new EventRouter(clientRef.baseUrl, initialProjectDir)
   await router.start()
 
   const sessions = new SessionManager(proxyClient, initialProjectDir)
@@ -105,7 +105,7 @@ async function main(): Promise<void> {
     },
   })
 
-  console.log("[index] OpenCode QQ Bot 已启动")
+  console.log("[index] Moss QQ Bot 已启动")
 
   let shuttingDown = false
   const shutdown = (signal: string): void => {
@@ -124,7 +124,7 @@ async function main(): Promise<void> {
 }
 
 /**
- * 把 OPENCODE_BASE_URL 或 OPENCODE_PROJECT_DIRECTORY 写回 ~/.openqq/.env（保留其他键）。
+ * 把 OPENCODE_BASE_URL 或 OPENCODE_PROJECT_DIRECTORY 写回 ~/.mossqq/.env（保留其他键）。
  * 若文件不存在则创建。
  */
 function persistEnvKV(key: string, value: string): void {

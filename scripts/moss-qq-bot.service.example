@@ -1,0 +1,22 @@
+[Unit]
+Description=Moss QQ Bot - Chat with Moss AI via QQ
+After=network-online.target moss-serve.service
+Wants=network-online.target moss-serve.service
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+WorkingDirectory=/PATH/TO/moss-qq-bot
+Environment="PATH=/home/YOUR_USERNAME/.bun/bin:/home/YOUR_USERNAME/.opencode/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="OPENCODE_BASE_URL=http://127.0.0.1:8192"
+EnvironmentFile=/home/YOUR_USERNAME/.mossqq/.env
+ExecStart=/home/YOUR_USERNAME/.bun/bin/bun run /PATH/TO/moss-qq-bot/src/index.ts
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/PATH/TO/moss-qq-bot/logs/bot.log
+StandardError=append:/PATH/TO/moss-qq-bot/logs/bot-error.log
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
